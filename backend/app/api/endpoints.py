@@ -220,6 +220,15 @@ def trigger_new_research(
         # Check existing run
         last_run = db.query(ResearchRun).filter(ResearchRun.account_id == account_slug).order_by(ResearchRun.created_at.desc()).first()
         if last_run and last_run.status == "COMPLETED":
+            parsed_logs = []
+            if last_run.logs_json:
+                try:
+                    parsed_logs = json.loads(last_run.logs_json)
+                except Exception:
+                    try:
+                        parsed_logs = eval(last_run.logs_json)
+                    except Exception:
+                        parsed_logs = [last_run.logs_json]
             return ResearchProgressResponse(
                 run_id=last_run.id,
                 account_id=account_slug,
@@ -227,7 +236,7 @@ def trigger_new_research(
                 status=last_run.status,
                 current_step=last_run.current_step,
                 progress_pct=last_run.progress_pct,
-                logs=eval(last_run.logs_json) if last_run.logs_json else [],
+                logs=parsed_logs,
                 error_message=last_run.error_message
             )
 
@@ -292,9 +301,12 @@ def get_research_progress(run_id: str, db: Session = Depends(get_db)):
     logs = []
     if run_record.logs_json:
         try:
-            logs = json.loads(run_record.logs_json.replace("'", '"'))
+            logs = json.loads(run_record.logs_json)
         except Exception:
-            logs = [run_record.logs_json]
+            try:
+                logs = eval(run_record.logs_json)
+            except Exception:
+                logs = [run_record.logs_json]
 
     return ResearchProgressResponse(
         run_id=run_record.id,

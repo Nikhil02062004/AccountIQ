@@ -33,37 +33,37 @@ export const AccountIntelligenceTab: React.FC<AccountIntelligenceTabProps> = ({ 
           <div>
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Legal Entity</div>
             <div className="text-sm font-bold text-slate-900 mt-1">{account.legal_name || account.name}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Ticker: {account.ticker || "ETR: SIE"}</div>
+            <div className="text-xs text-slate-500 mt-0.5">Ticker: {account.ticker || (account.id === "siemens-ag" ? "ETR: SIE" : "Unlisted / Private")}</div>
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Headquarters</div>
-            <div className="text-sm font-bold text-slate-900 mt-1">{account.headquarters || "Munich, Germany"}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Primary Campus: Werner-von-Siemens-Str. 1</div>
+            <div className="text-sm font-bold text-slate-900 mt-1">{account.headquarters || "UNKNOWN"}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{account.id === "siemens-ag" ? "Primary Campus: Werner-von-Siemens-Str. 1" : "Principal Corporate Headquarters"}</div>
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Industry Classification</div>
-            <div className="text-sm font-bold text-slate-900 mt-1">{account.industry}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Sectors: Automation, Infrastructure, Mobility</div>
+            <div className="text-sm font-bold text-slate-900 mt-1">{account.industry || "Enterprise"}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{account.id === "siemens-ag" ? "Sectors: Automation, Infrastructure, Mobility" : `Sector: ${account.industry || "Commercial Operations"}`}</div>
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Workforce Distribution</div>
-            <div className="text-sm font-bold text-slate-900 mt-1">{account.global_workforce}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Source: Audited Annual Report FY2024</div>
+            <div className="text-sm font-bold text-slate-900 mt-1">{account.global_workforce || "UNKNOWN"}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{account.id === "siemens-ag" ? "Source: Audited Annual Report FY2024" : "Source: Primary Corporate Filings"}</div>
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Financial Scale</div>
-            <div className="text-sm font-bold text-slate-900 mt-1">{account.annual_revenue}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Fiscal Year ended Sept 30, 2024</div>
+            <div className="text-sm font-bold text-slate-900 mt-1">{account.annual_revenue || "UNKNOWN"}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{account.id === "siemens-ag" ? "Fiscal Year ended Sept 30, 2024" : "Latest Disclosed Financial Period"}</div>
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Geographic Scale</div>
-            <div className="text-sm font-bold text-slate-900 mt-1">190+ Countries Worldwide</div>
-            <div className="text-xs text-slate-500 mt-0.5">200+ major production facilities</div>
+            <div className="text-sm font-bold text-slate-900 mt-1">{account.geographic_presence || (account.id === "siemens-ag" ? "190+ Countries Worldwide" : "Global Operations")}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{account.id === "siemens-ag" ? "200+ major production facilities" : "Multi-region international presence"}</div>
           </div>
         </div>
 
@@ -71,14 +71,14 @@ export const AccountIntelligenceTab: React.FC<AccountIntelligenceTabProps> = ({ 
           <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-100">
             <div className="text-xs font-bold text-slate-700">Operating Business Units</div>
             <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-              {account.business_units || "Digital Industries (DI), Smart Infrastructure (SI), Mobility, Siemens Healthineers (majority-owned subsidiary), Siemens Financial Services (SFS)."}
+              {account.business_units || (account.id === "siemens-ag" ? "Digital Industries (DI), Smart Infrastructure (SI), Mobility, Siemens Healthineers (majority-owned subsidiary), Siemens Financial Services (SFS)." : `Corporate divisions and commercial operations across global operating entities for ${account.name}.`)}
             </p>
           </div>
 
           <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-100">
-            <div className="text-xs font-bold text-slate-700">Major Manufacturing &amp; R&amp;D Facilities</div>
+            <div className="text-xs font-bold text-slate-700">Major Facilities &amp; Hubs</div>
             <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-              {account.major_facilities || "Munich HQ, Berlin, Erlangen, Amberg Electronic Works (lighthouse smart factory), Bad Neustadt, and international manufacturing hubs in US, China, and India."}
+              {account.major_facilities || (account.id === "siemens-ag" ? "Munich HQ, Berlin, Erlangen, Amberg Electronic Works (lighthouse smart factory), Bad Neustadt, and international manufacturing hubs in US, China, and India." : `Principal operational hubs and facilities in ${account.headquarters || "corporate headquarters region"}.`)}
             </p>
           </div>
         </div>

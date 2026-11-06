@@ -74,7 +74,7 @@ export const RecommendedWayInTab: React.FC<RecommendedWayInTabProps> = ({
             {rec.why_this_account}
           </p>
           <div className="mt-3 text-[11px] text-sky-700 bg-sky-50 p-2.5 rounded border border-sky-100 font-medium">
-            <strong>Key Anchor:</strong> Existing Zscaler enterprise customer across 300,000+ seats; zero-trust is already proven and endorsed at the Managing Board level.
+            <strong>Key Anchor:</strong> {account.is_existing_customer ? (account.id === "siemens-ag" ? "Existing Zscaler enterprise customer across 300,000+ seats; zero-trust is already proven and endorsed at the Managing Board level." : "Existing enterprise customer with proven zero-trust adoption and significant whitespace.") : `Major enterprise prospect in ${account.industry || "target market"} undergoing digital modernization.`}
           </div>
         </div>
 
@@ -87,7 +87,7 @@ export const RecommendedWayInTab: React.FC<RecommendedWayInTabProps> = ({
             {rec.why_now}
           </p>
           <div className="mt-3 text-[11px] text-emerald-800 bg-emerald-50 p-2.5 rounded border border-emerald-100 font-medium">
-            <strong>Urgency Catalyst:</strong> Altair simulation software integration underway + NIS2 compliance deadline for 200+ global factories.
+            <strong>Urgency Catalyst:</strong> {account.triggers?.[0]?.title ? `${account.triggers[0].title}` : (account.id === "siemens-ag" ? "Altair simulation software integration underway + NIS2 compliance deadline for 200+ global factories." : "Active enterprise transformation and cloud workload scaling window.")}
           </div>
         </div>
       </div>
@@ -102,20 +102,20 @@ export const RecommendedWayInTab: React.FC<RecommendedWayInTabProps> = ({
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">First Stakeholder to Approach</span>
               <h3 className="text-lg font-bold text-slate-900">
-                {firstContact?.full_name || "Frederik Janssen"}
+                {firstContact?.full_name || "Stakeholder Verification Pending"}
               </h3>
               <p className="text-xs text-slate-600">
-                {firstContact?.current_title || "CIO, Siemens Digital Industries"}
+                {firstContact?.current_title || "No verified public executive profile"}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-emerald-100 text-emerald-800">
-              {firstContact?.buying_role || "CHAMPION"}
+              {firstContact?.buying_role || "STAKEHOLDER"}
             </span>
             <span className="text-xs font-mono font-bold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-100">
-              Relevance: {firstContact?.relevance_score || 98}/100
+              Relevance: {firstContact ? `${firstContact.relevance_score}/100` : "N/A"}
             </span>
           </div>
         </div>

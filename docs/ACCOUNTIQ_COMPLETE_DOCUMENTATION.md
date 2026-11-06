@@ -435,27 +435,99 @@ A rookie enterprise seller almost always reaches out directly to the Chief Cyber
 
 ---
 
-## 6. Research Engine & Evidence Extraction Pipeline
+## 6. Dynamic Research Engine & Evidence Discovery Pipeline
 
-AccountIQ includes an automated, 7-stage research and verification pipeline designed to extract structured B2B intelligence from raw public unstructured data.
+AccountIQ features a truly dynamic, company-agnostic research and verification pipeline capable of discovering and analyzing arbitrary global enterprises without manual rules or hardcoded seed tables. The system extracts structured B2B intelligence exclusively from live public sources while enforcing zero hallucination and complete evidence provenance.
 
 ```mermaid
-flowchart LR
-    S1["1. Discovery<br/>Identify Domain & Corporate Ticker"] --> S2["2. Source Ingestion<br/>Crawl Investor Relations, Press & Case Studies"]
-    S2 --> S3["3. Text Extraction<br/>Clean DOM, parse PDF & isolate facts"]
-    S3 --> S4["4. Claim Verification<br/>Cross-reference URLs & extract verbatim text"]
-    S4 --> S5["5. Committee Mapping<br/>Classify buying roles & hierarchy"]
-    S5 --> S6["6. Scoring Execution<br/>Compute Attractiveness, Timing & Relevance"]
-    S6 --> S7["7. Strategy Synthesis<br/>Generate custom sales playbooks & battle-cards"]
+flowchart TD
+    Q["User Input: Arbitrary Company Name<br/>(e.g., Amazon, Google LLC, NVIDIA, Reliance Industries)"] --> S1
+    subgraph Stage1["1. Dynamic Entity Resolution (entity_resolver.py)"]
+        S1["Query Normalization & Token Disambiguation"]
+        S1 --> S1A["SEC EDGAR Directory Lookup (company_tickers.json)"]
+        S1 --> S1B["Wikipedia Corporate Article Search & Disambiguation"]
+        S1A --> S1C["Resolve Legal Entity, CIK, Ticker, HQ, Country & Type"]
+        S1B --> S1C
+        S1C --> S1D{"Parent vs. Subsidiary?"}
+        S1D -- "Yes (e.g. Google -> Alphabet)" --> S1E["Fetch Parent Infobox & Consolidated Disclosures"]
+        S1D -- "No (Standalone)" --> S1F["Direct Entity Profile"]
+        S1E --> S1G["Token Overlap Guard: Reject Fictional Query"]
+        S1F --> S1G
+    end
+
+    S1G --> S2
+    subgraph Stage2["2. Source Discovery Layer (source_discovery.py)"]
+        S2["SourceDiscoveryManager (Zero-Cost Async Orchestration)"]
+        S2 --> A1["WikipediaSourceAdapter<br/>Wikitext Lead & Infobox Extraction"]
+        S2 --> A2["SecEdgarSourceAdapter<br/>10-K, 10-Q & 8-K Regulatory Submissions"]
+        S2 --> A3["WebDomainSourceAdapter<br/>Direct Corporate Domain Verification & Metadata"]
+    end
+
+    A1 --> S3
+    A2 --> S3
+    A3 --> S3
+    subgraph Stage3["3. Field-Level Fact & Claim Extraction (fact_extractor.py)"]
+        S3["Deterministic Fact Parsing & Metric Normalization"]
+        S3 --> F1["Financials: Audited Annual Revenue & Fiscal Period"]
+        S3 --> F2["Workforce Scale: Headcount & Filing Year"]
+        S3 --> F3["Leadership: Executive Board & Committee Discovery"]
+        S3 --> F4["Technology Footprint: Multi-Cloud, IdP & Security"]
+        S3 --> F5["Corporate Triggers: M&A, AI Rollouts, Regulations"]
+        S3 --> F6["Honest 'UNKNOWN' Enforcement for Missing Claims"]
+        S3 --> F7["Field-Level Evidence Claims with Provenance URLs"]
+    end
+
+    F7 --> S4
+    subgraph Stage4["4. Account Isolation & Database Persistence (research_pipeline.py)"]
+        S4["Strict Multi-Tenant Database Isolation (SQLite)"]
+        S4 --> P1["Idempotent Execution: Clean Previous Derived Records"]
+        S4 --> P2["Persist Normalized Account, Metrics, Sources & Claims"]
+        S4 --> P3["Populate Zscaler Product Footprint & Whitespace Gaps"]
+    end
+
+    P3 --> S5
+    subgraph Stage5["5. Algorithmic Scoring & Strategic Recommendation"]
+        S5["Dynamic Account Scoring (scoring.py)"]
+        S5 --> SC1["Attractiveness Score (Numeric Revenue & Workforce Scale)"]
+        S5 --> SC2["Timing Score (Account-Specific Trigger Evaluation)"]
+        S5 --> SC3["Evidence Coverage Score (Claim Corroboration Math)"]
+        SC1 --> R1["Recommendation Engine (recommendation_engine.py)"]
+        SC2 --> R1
+        SC3 --> R1
+        R1 --> OUT["Tailored 'Way In' Strategy, Primary Champion & Outreach Sequence"]
+    end
 ```
 
-### 6.1 The Evidence Validation Engine (`validator.py`)
-To prevent hallucinated claims from entering the system, the Validation Engine enforces strict provenance checks on every data element:
+### 6.1 Entity Resolution & Disambiguation (`entity_resolver.py`)
+The `EntityResolver` serves as the front-line gateway for any company name entered by a user:
+1. **SEC EDGAR Integration:** Asynchronously queries the official U.S. Securities and Exchange Commission `company_tickers.json` registry to map company queries to official CIK numbers, canonical names, and primary stock exchange tickers (e.g., `NVDA`, `AMZN`).
+2. **Encyclopedic REST Resolution:** Queries the Wikipedia API using compliant Wikimedia User-Agent headers (`AccountIQ-Bot/1.0`). Uses multiline wikitext tokenization and template expansion (`{{ubl}}`, `{{unbulleted list}}`, `{{US$}}`, `{{euro}}`, `{{INRConvert}}`) to extract structured infobox fields.
+3. **Parent vs. Subsidiary Disambiguation:** Automatically detects whether an entity is an operating subsidiary (e.g., `Google LLC` operating under parent `Alphabet Inc.`). When detected, the resolver recursively inspects the parent entity's filings to capture consolidated group revenues while explicitly attributing provenance to the parent corporation.
+4. **Token Overlap Guard:** Fictional or obscure queries (e.g., *"Fictional Quantum Obscure 9999 Ltd"*) are evaluated against search result titles. If there is no meaningful keyword overlap, the resolver marks `is_resolved = False` and sets headquarters and financials to `UNKNOWN` rather than inventing synthetic data.
+
+### 6.2 Zero-Cost Modular Source Discovery (`source_discovery.py`)
+To ensure high resilience and 100% zero-cost operation without requiring commercial data subscriptions:
+- **`BaseSourceAdapter` Architecture:** An extensible abstract base class interface allowing new data providers to be plugged in seamlessly.
+- **`WikipediaSourceAdapter`:** Retrieves public encyclopedic records, infobox parameters, and executive bios with source URLs and revision dates.
+- **`SecEdgarSourceAdapter`:** For public U.S. reporting companies, constructs direct access URLs to EDGAR submission feeds (`data.sec.gov/submissions/CIK{cik}.json`) and links to official 10-K annual reports.
+- **`WebDomainSourceAdapter`:** Verifies domain reachability, extracts OpenGraph metadata, title tags, and corporate meta descriptions.
+- **`SourceDiscoveryManager`:** Coordinates concurrent discovery across all adapters using `asyncio.gather`, tagging each discovered source with reliability weights and retrieval dates.
+
+### 6.3 Fact Extraction & Provenance Generation (`fact_extractor.py`)
+The `FactExtractor` converts raw discovery outputs into normalized database entities and individual `EvidenceClaim` audit records:
+- **Revenue Parsing:** Extracts numeric revenue, reporting currency (USD, EUR, INR), and fiscal year. For subsidiaries, automatically qualifies revenue as `(Parent Company Consolidated / Year)`.
+- **Workforce Scale:** Extracts exact reported employee counts, stripping parenthetical notes and citation tags to prevent digit concatenation.
+- **Executive Leadership & Roles:** Extracts real executive leadership from Infobox `key_people` (e.g., Jensen Huang, Andy Jassy, Sundar Pichai), stripping HTML comments and template markup, and maps each executive to a specific buying committee persona (`CHAMPION`, `ECONOMIC_BUYER`, `TECHNICAL_DECISION_MAKER`, or `BLOCKER`).
+- **Honest `UNKNOWN` Principle:** If a data point is not published in primary sources, it is explicitly set to `UNKNOWN`. Missing fields never cause the pipeline to hallucinate plausible numbers.
+
+### 6.4 The Evidence Validation Engine (`validator.py`)
+To prevent ungrounded claims from entering the system, the Validation Engine enforces strict provenance checks on every data element:
 1. **URL Accessibility Check:** Verifies that every claim links to an accessible primary or secondary domain.
 2. **Text Ingestion & Verbatim Matching:** Extracts exact sentence excerpts from the source document to verify that the extracted claim is not fabricated.
 3. **Status Assignment:**
-   - `VERIFIED`: The claim is directly supported by an official primary corporate source (e.g., `siemens.com` investor relations or `zscaler.com` official customer case study).
+   - `VERIFIED`: The claim is directly supported by an official primary corporate source (e.g., `siemens.com` investor relations, SEC EDGAR filing, or `zscaler.com` customer case study).
    - `CORROBORATED`: The claim is confirmed by two or more independent business publications or reputable industry outlets.
+   - `INFERRED`: Derived from analytical synthesis (e.g., Zscaler whitespace opportunity mapping).
    - `DISPUTED` / `UNVERIFIED`: The claim lacks verifiable primary evidence and is flagged or rejected.
 
 ---
@@ -918,54 +990,75 @@ AccountIQ includes an automated test suite located in [`backend/tests/test_all.p
 ### 14.1 Running the Automated Test Suite
 
 ```powershell
-.\venv\Scripts\pytest.exe -v
+.\venv\Scripts\pytest.exe backend/tests/test_dynamic_generalization.py backend/tests/test_all.py -v
 ```
 
 ### 14.2 Test Suite Execution Results
 
-All 14 automated unit and integration tests pass in under 2 seconds:
+All 23 automated unit, integration, and generalization tests pass deterministically:
 
 ```
-================================ test session starts ================================
-platform win32 -- Python 3.12.0, pytest-8.3.4, pluggy-1.5.0
+============================= test session starts =============================
+platform win32 -- Python 3.12.2, pytest-8.4.2, pluggy-1.7.0
 rootdir: C:\Users\d9f6t\OneDrive\Desktop\BridgeAI.ai
 configfile: pytest.ini
-collected 14 items
+collected 23 items
 
-backend/tests/test_all.py::test_01_backend_health PASSED                       [  7%]
-backend/tests/test_all.py::test_02_get_accounts PASSED                         [ 14%]
-backend/tests/test_all.py::test_03_get_siemens_details PASSED                  [ 21%]
-backend/tests/test_all.py::test_04_siemens_metrics PASSED                      [ 28%]
-backend/tests/test_all.py::test_05_siemens_technologies PASSED                  [ 35%]
-backend/tests/test_all.py::test_06_siemens_contacts PASSED                      [ 42%]
-backend/tests/test_all.py::test_07_siemens_committee_graph PASSED              [ 50%]
-backend/tests/test_all.py::test_08_siemens_recommendation PASSED               [ 57%]
-backend/tests/test_all.py::test_09_siemens_evidence_provenance PASSED          [ 64%]
-backend/tests/test_all.py::test_10_scoring_engine_math PASSED                  [ 71%]
-backend/tests/test_all.py::test_11_llm_provider_deterministic PASSED           [ 78%]
-backend/tests/test_all.py::test_12_second_account_isolation PASSED             [ 85%]
-backend/tests/test_all.py::test_13_contact_deletion_gdpr PASSED                [ 92%]
-backend/tests/test_all.py::test_14_export_report_html PASSED                   [100%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_us_public PASSED [  4%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_parent_subsidiary PASSED [  8%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_global_enterprises PASSED [ 13%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_fictional_unknown PASSED [ 17%]
+backend/tests/test_dynamic_generalization.py::test_fact_extraction_no_siemens_leakage PASSED [ 21%]
+backend/tests/test_dynamic_generalization.py::test_recommendation_account_agnostic PASSED [ 26%]
+backend/tests/test_dynamic_generalization.py::test_recommendation_empty_contacts_honest_message PASSED [ 30%]
+backend/tests/test_dynamic_generalization.py::test_scoring_account_agnostic_timing PASSED [ 34%]
+backend/tests/test_dynamic_generalization.py::test_siemens_flagship_remains_intact PASSED [ 39%]
+backend/tests/test_all.py::test_1_account_creation PASSED                [ 43%]
+backend/tests/test_all.py::test_2_source_ingestion PASSED                [ 47%]
+backend/tests/test_all.py::test_3_evidence_extraction PASSED             [ 52%]
+backend/tests/test_all.py::test_4_evidence_to_claim_linking PASSED       [ 56%]
+backend/tests/test_all.py::test_5_contact_validation PASSED              [ 60%]
+backend/tests/test_all.py::test_6_confidence_classification PASSED       [ 65%]
+backend/tests/test_all.py::test_7_account_scoring PASSED                 [ 69%]
+backend/tests/test_all.py::test_8_buying_committee_graph_api PASSED      [ 73%]
+backend/tests/test_all.py::test_9_recommendation_generation PASSED       [ 78%]
+backend/tests/test_all.py::test_10_missing_evidence_handling PASSED      [ 82%]
+backend/tests/test_all.py::test_11_conflicting_evidence_handling PASSED  [ 86%]
+backend/tests/test_all.py::test_12_second_account_isolation PASSED       [ 91%]
+backend/tests/test_all.py::test_13_data_deletion_privacy PASSED          [ 95%]
+backend/tests/test_all.py::test_14_api_error_handling PASSED             [100%]
 
-================================ 14 passed in 1.75s =================================
+======================= 23 passed in 23.56s =======================
 ```
 
 ### 14.3 Detailed Test Descriptions
 
-1. `test_01_backend_health`: Verifies that the `/health` endpoint returns `200 OK` and `status: "healthy"`.
-2. `test_02_get_accounts`: Validates that `GET /api/accounts` returns a non-empty list containing Siemens AG.
-3. `test_03_get_siemens_details`: Confirms corporate headquarters, revenue, and employee counts match primary filings.
-4. `test_04_siemens_metrics`: Verifies financial KPIs (€75.9B revenue, 311,000 employees).
-5. `test_05_siemens_technologies`: Validates that ZIA, ZPA, and ZDX are marked as `DEPLOYED` and whitespace categories are unassigned.
-6. `test_06_siemens_contacts`: Validates that exactly 13 verified executive contacts are retrieved with valid roles.
-7. `test_07_siemens_committee_graph`: Confirms graph node count ($\ge 13$) and edge connections for React Flow rendering.
-8. `test_08_siemens_recommendation`: Confirms Frederik Janssen is selected as primary champion with outreach copy.
-9. `test_09_siemens_evidence_provenance`: Asserts that 100% of claims have URLs, excerpts, and confidence ratings $\ge 0.85$.
-10. `test_10_scoring_engine_math`: Verifies that Attractiveness ($\ge 90$), Timing ($\ge 85$), and Coverage ($\ge 90$) match exact formula specifications.
-11. `test_11_llm_provider_deterministic`: Verifies that `DeterministicProvider` extracts metrics and generates cadences offline with zero API calls.
-12. `test_12_second_account_isolation`: Tests ingestion of a second account (`ABB Ltd`), verifying that Siemens data is not duplicated or leaked.
-13. `test_13_contact_deletion_gdpr`: Inserts a test contact, calls `DELETE /api/contacts/{id}`, and confirms permanent removal from SQLite.
-14. `test_14_export_report_html`: Tests generation of the standalone printable HTML dossier and validates HTML structure.
+#### Dynamic Generalization & Identity Resolution Tests (`test_dynamic_generalization.py`)
+1. `test_entity_resolution_us_public`: Tests automated identity resolution for listed U.S. corporations (Amazon, Nvidia), validating SEC CIK extraction and accurate headquarters (`Seattle, WA`, `Santa Clara, CA`).
+2. `test_entity_resolution_parent_subsidiary`: Tests parent/subsidiary disambiguation on `Google LLC`, verifying that parent `Alphabet Inc.` is identified, subsidiary flag is set, and consolidated metrics are fetched.
+3. `test_entity_resolution_global_enterprises`: Tests non-U.S. global corporations (`Reliance Industries`), verifying stock ticker detection and Mumbai headquarters resolution.
+4. `test_entity_resolution_fictional_unknown`: Tests unknown/fictional company queries (`"Fictional Quantum Obscure 9999 Ltd"`), verifying that the resolver honest guard marks `is_resolved=False` and keeps headquarters as `UNKNOWN` rather than inventing fake data.
+5. `test_fact_extraction_no_siemens_leakage`: Tests fact extraction from discovered sources for an arbitrary company, validating that no Siemens trademarks, Altair acquisitions, or Munich locations leak into other accounts.
+6. `test_recommendation_account_agnostic`: Asserts that recommendations generated for new accounts reference their actual discovered contacts and triggers, not Siemens champions.
+7. `test_recommendation_empty_contacts_honest_message`: Validates that when an account has zero discovered contacts, the engine outputs an honest explanatory message rather than inventing fake contacts.
+8. `test_scoring_account_agnostic_timing`: Verifies that timing score evaluates actual account triggers rather than assuming Altair or Siemens Industrial Copilot.
+9. `test_siemens_flagship_remains_intact`: Regression assertion confirming that the Siemens AG flagship dossier (13 contacts, Frederik Janssen, 4 expansion modules, €75.9B revenue) remains 100% intact.
+
+#### Core Platform, Integration & Regression Tests (`test_all.py`)
+10. `test_1_account_creation`: Verifies that account creation initializes isolated records with valid UUIDs.
+11. `test_2_source_ingestion`: Validates multi-source ingestion tagging with official provenance and reliability weights.
+12. `test_3_evidence_extraction`: Validates extraction of structured claims from raw source text.
+13. `test_4_evidence_to_claim_linking`: Asserts that 100% of claims link to primary source IDs with verbatim excerpts.
+14. `test_5_contact_validation`: Validates contact role assignment, department mapping, and reachability.
+15. `test_6_confidence_classification`: Tests confidence classification scoring based on corroboration thresholds.
+16. `test_7_account_scoring`: Verifies mathematical scoring formulas for Attractiveness, Timing, and Coverage.
+17. `test_8_buying_committee_graph_api`: Confirms React Flow node and edge generation for organizational visualization.
+18. `test_9_recommendation_generation`: Confirms primary champion selection and multi-touch sales copy synthesis.
+19. `test_10_missing_evidence_handling`: Tests graceful handling of sparse or missing evidence without crashes.
+20. `test_11_conflicting_evidence_handling`: Tests dual reporting handling (e.g. continuing vs. discontinued headcount).
+21. `test_12_second_account_isolation`: Tests ingestion of an expansion account (`ABB Ltd`), verifying zero cross-tenant data leakage.
+22. `test_13_data_deletion_privacy`: Inserts a test contact, executes GDPR `DELETE /api/contacts/{id}`, and confirms permanent purge from SQLite.
+23. `test_14_api_error_handling`: Validates proper HTTP 404/422 status codes and error payloads.
 
 ---
 

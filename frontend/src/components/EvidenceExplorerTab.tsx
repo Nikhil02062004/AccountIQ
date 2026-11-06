@@ -143,7 +143,7 @@ export const EvidenceExplorerTab: React.FC<EvidenceExplorerTabProps> = ({ accoun
           <div>
             <span className="font-bold">Transparent Conflict Resolution:</span>
             <p className="mt-1 leading-relaxed">
-              AccountIQ does not overwrite or discard diverging public metrics. For example, Siemens reported 312,000 employees in continuing operations, but 327,000 employees on a total basis before business divestments. Both claims are preserved below with their respective reporting boundaries.
+              AccountIQ does not overwrite or discard diverging public metrics. For example, enterprises often report differing employee counts across continuing operations versus total headcount before divestments. Competing claims are preserved below with their respective reporting boundaries.
             </p>
           </div>
         </div>

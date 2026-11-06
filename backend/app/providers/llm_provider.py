@@ -39,21 +39,22 @@ class DeterministicProvider(BaseLLMProvider):
         first_contact = account_data.get("first_contact", {})
         triggers = account_data.get("triggers", [])
         primary_trigger = triggers[0] if triggers else {}
+        account_name = account_data.get("account_name", "the enterprise")
         
         name = first_contact.get("full_name", "the stakeholder")
         title = first_contact.get("current_title", "Leader")
         
         return {
-            "outreach_angle": f"Accelerating {primary_trigger.get('title', 'Zero Trust Enterprise Transformation')} without Friction",
+            "outreach_angle": f"Accelerating {primary_trigger.get('title', 'Zero Trust Enterprise Transformation')} for {account_name}",
             "why_this_stakeholder": f"As {title}, {name} owns the architectural and strategic mandate for this domain and has publicly prioritized agility, cost optimization, and secure hybrid operations.",
             "suggested_opener_draft": (
                 f"Dear {name.split()[-1] if name else 'Leader'},\n\n"
-                f"Following Siemens' recent announcement regarding {primary_trigger.get('title', 'ongoing enterprise modernization')}, "
+                f"Following {account_name}'s recent announcement regarding {primary_trigger.get('title', 'ongoing enterprise modernization')}, "
                 f"many engineering and IT leaders face the dual challenge of integrating new workloads rapidly while maintaining zero trust boundaries. "
                 f"Given your public commitment to {first_contact.get('stated_priority', 'driving scalable secure architecture')}, "
-                f"I wanted to share how peer industrial enterprises are extending their existing Zscaler Zero Trust Exchange footprint "
+                f"I wanted to share how peer enterprises are leveraging the Zscaler Zero Trust Exchange "
                 f"to protect cloud workloads and operational environments with zero added network complexity.\n\n"
-                f"Would you be open to a brief 15-minute briefing on how your teams can leverage existing Zscaler investments for this next phase?"
+                f"Would you be open to a brief 15-minute briefing on how your teams can leverage zero trust architecture for this next phase?"
             )
         }
 

@@ -192,7 +192,7 @@ export default function Home() {
             AccountIQ — Enterprise Intelligence Platform POC | Built for Zscaler Sales Teams
           </div>
           <div className="flex items-center gap-4 text-[11px]">
-            <span>Main Account: <strong>Siemens AG (Expansion)</strong></span>
+            <span>Active Account: <strong>{accountDetail?.name || "Siemens AG"}</strong></span>
             <span>•</span>
             <span>0% Data Fabrication</span>
             <span>•</span>
