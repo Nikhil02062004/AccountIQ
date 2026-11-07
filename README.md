@@ -23,7 +23,7 @@ The easiest and most reliable way to evaluate AccountIQ is using **Option 2: Doc
 
 ```bash
 # 1. Clone the repository
-git clone <REPO_URL>
+git clone <https://github.com/Nikhil02062004/AccountIQ.git>
 cd BridgeAI.ai
 
 # 2. Start the entire application with one command
