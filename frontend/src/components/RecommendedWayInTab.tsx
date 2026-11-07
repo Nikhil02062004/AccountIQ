@@ -52,7 +52,9 @@ export const RecommendedWayInTab: React.FC<RecommendedWayInTabProps> = ({
               {rec.outreach_angle}
             </h1>
             <p className="text-xs text-sky-200/90 mt-1 max-w-3xl leading-relaxed">
-              Synthesizing account triggers ($10B Altair acquisition, Industrial Copilot, OT NIS2 compliance) with verified stakeholder mandates.
+              {account.id === "siemens-ag"
+                ? "Synthesizing account triggers ($10B Altair acquisition, Industrial Copilot, OT NIS2 compliance) with verified stakeholder mandates."
+                : `Synthesizing corporate triggers and technology context for ${account.name} with verified stakeholder priorities.`}
             </p>
           </div>
 
@@ -181,7 +183,9 @@ export const RecommendedWayInTab: React.FC<RecommendedWayInTabProps> = ({
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Recommended Next Stakeholder</span>
             <h4 className="text-sm font-bold text-slate-900">
-              {secondContact?.full_name || "Natalia Oropeza"} — {secondContact?.current_title || "Global Chief Cybersecurity Officer"}
+              {secondContact
+                ? `${secondContact.full_name} — ${secondContact.current_title}`
+                : (account.id === "siemens-ag" ? "Natalia Oropeza — Global Chief Cybersecurity Officer" : "Secondary Stakeholder Mapping Pending")}
             </h4>
           </div>
         </div>

@@ -5,22 +5,53 @@ import {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
 
+async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      let errorDetail = `HTTP ${res.status}: ${res.statusText}`;
+      try {
+        const errorJson = await res.json();
+        if (errorJson && errorJson.detail) {
+          errorDetail = typeof errorJson.detail === "string"
+            ? errorJson.detail
+            : JSON.stringify(errorJson.detail);
+        }
+      } catch {
+        try {
+          const text = await res.text();
+          if (text) errorDetail = text;
+        } catch {}
+      }
+      throw new Error(errorDetail);
+    }
+    return res.json();
+  } catch (err: any) {
+    if (
+      err.message &&
+      (err.message.includes("Failed to fetch") ||
+       err.message.includes("NetworkError") ||
+       err.name === "TypeError")
+    ) {
+      throw new Error(
+        "Unable to connect to the AccountIQ research server (http://127.0.0.1:8000). Please verify that the backend is running."
+      );
+    }
+    throw err;
+  }
+}
+
 export async function fetchAccounts(): Promise<AccountSummary[]> {
-  const res = await fetch(`${API_BASE}/accounts`, { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to fetch accounts");
-  return res.json();
+  return apiFetch<AccountSummary[]>("/accounts", { cache: "no-store" });
 }
 
 export async function fetchAccountDetail(id: string): Promise<AccountDetail> {
-  const res = await fetch(`${API_BASE}/accounts/${id}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Failed to fetch account ${id}`);
-  return res.json();
+  return apiFetch<AccountDetail>(`/accounts/${id}`, { cache: "no-store" });
 }
 
 export async function fetchCommitteeGraph(id: string): Promise<{ nodes: any[]; edges: any[] }> {
-  const res = await fetch(`${API_BASE}/accounts/${id}/committee-graph`, { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to fetch committee graph");
-  return res.json();
+  return apiFetch<{ nodes: any[]; edges: any[] }>(`/accounts/${id}/committee-graph`, { cache: "no-store" });
 }
 
 export async function fetchEvidenceData(
@@ -32,15 +63,11 @@ export async function fetchEvidenceData(
   if (params?.is_conflicting !== undefined) url.searchParams.set("is_conflicting", String(params.is_conflicting));
   if (params?.entity_type) url.searchParams.set("entity_type", params.entity_type);
 
-  const res = await fetch(url.toString(), { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to fetch evidence data");
-  return res.json();
+  return apiFetch<EvidenceExplorerData>(url.toString(), { cache: "no-store" });
 }
 
 export async function fetchQualityReport(id: string): Promise<QualityReport> {
-  const res = await fetch(`${API_BASE}/accounts/${id}/quality-report`, { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to fetch data quality report");
-  return res.json();
+  return apiFetch<QualityReport>(`/accounts/${id}/quality-report`, { cache: "no-store" });
 }
 
 export async function startNewResearch(data: {
@@ -48,25 +75,19 @@ export async function startNewResearch(data: {
   industry?: string;
   is_existing_customer?: boolean;
 }): Promise<ResearchProgress> {
-  const res = await fetch(`${API_BASE}/research/new`, {
+  return apiFetch<ResearchProgress>("/research/new", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to initiate research run");
-  return res.json();
 }
 
 export async function checkResearchProgress(runId: string): Promise<ResearchProgress> {
-  const res = await fetch(`${API_BASE}/research/${runId}`, { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to poll research run");
-  return res.json();
+  return apiFetch<ResearchProgress>(`/research/${runId}`, { cache: "no-store" });
 }
 
 export async function deleteContactRecord(contactId: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/contacts/${contactId}`, {
+  return apiFetch<any>(`/contacts/${contactId}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error("Failed to delete contact record");
-  return res.json();
 }

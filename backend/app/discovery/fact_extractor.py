@@ -3,6 +3,9 @@ import datetime
 from typing import Dict, Any, List, Tuple, Optional
 from backend.app.discovery.source_discovery import DiscoveredSource
 
+def get_current_date() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
 class ExtractedFacts:
     def __init__(self):
         self.headquarters: str = "UNKNOWN"
@@ -15,14 +18,17 @@ class ExtractedFacts:
         self.annual_revenue: str = "UNKNOWN"
         self.revenue_numeric_billions: float = 0.0
         self.revenue_currency: str = "USD"
+        self.revenue_currency_symbol: str = "$"
         self.revenue_excerpt: str = ""
         self.revenue_year: str = ""
         self.is_parent_revenue: bool = False
         self.parent_company_name: Optional[str] = None
+        self.operating_income: str = "UNKNOWN"
+        self.net_income: str = "UNKNOWN"
         self.industry: str = "UNKNOWN"
         self.company_description: str = ""
         self.business_units: str = "UNKNOWN"
-        self.geographic_presence: str = "Global presence across international markets."
+        self.geographic_presence: str = "Global operations across international markets."
         self.contacts: List[Dict[str, Any]] = []
         self.technologies: List[Tuple[str, str, str, str, float, str]] = []
         self.priorities: List[Tuple[str, str, str, str]] = []
@@ -30,12 +36,210 @@ class ExtractedFacts:
         self.evidence_claims: List[Dict[str, Any]] = []
 
 
+class FinancialNormalizer:
+    """
+    Universal normalizer for multi-currency financial disclosures.
+    Supports USD, EUR, GBP, INR, CHF, JPY, CAD, AUD.
+    Normalizes millions, billions, trillions, lakh crores, and European number formatting.
+    Never silently converts currency.
+    """
+
+    @classmethod
+    def normalize(cls, raw: Optional[str], default_period: str = "") -> Tuple[str, float, str, str, str]:
+        if not raw or raw.strip().upper() in ["UNKNOWN", "NONE", "UNDISCLOSED", ""]:
+            return "UNKNOWN", 0.0, "$", "USD", default_period or "Latest Disclosed Period"
+
+        # Strip HTML comments, references, footnotes
+        clean = re.sub(r'<!--[\s\S]*?-->', '', raw)
+        clean = re.sub(r'<ref[^>]*>.*?</ref>', '', clean, flags=re.DOTALL)
+        clean = re.sub(r'<ref[^>]*/>', '', clean)
+        clean = clean.replace("&nbsp;", " ").strip()
+
+        # Currency detection
+        curr_symbol = "$"
+        curr_iso = "USD"
+        if any(s in clean for s in ["€", "EUR", "euro", "Euro"]):
+            curr_symbol = "€"
+            curr_iso = "EUR"
+        elif any(s in clean for s in ["£", "GBP", "pound", "Pound"]):
+            curr_symbol = "£"
+            curr_iso = "GBP"
+        elif any(s in clean for s in ["₹", "INR", "Rs.", "rupee", "Rupee"]):
+            curr_symbol = "₹"
+            curr_iso = "INR"
+        elif any(s in clean for s in ["CHF", "Swiss"]):
+            curr_symbol = "CHF "
+            curr_iso = "CHF"
+        elif any(s in clean for s in ["¥", "JPY", "yen", "Yen"]):
+            curr_symbol = "¥"
+            curr_iso = "JPY"
+        elif "CAD" in clean or "C$" in clean:
+            curr_symbol = "C$"
+            curr_iso = "CAD"
+        elif "AUD" in clean or "A$" in clean:
+            curr_symbol = "A$"
+            curr_iso = "AUD"
+
+        # Reporting period / Year detection
+        year_match = re.search(r'\((?:FY\s*)?([0-9]{2,4}[^\)]*)\)', clean)
+        period = year_match.group(1).strip() if year_match else (default_period or "Latest Fiscal Year")
+
+        clean_no_parens = re.sub(r'\([^)]*\)', '', clean).strip()
+
+        # Scale Multiplier
+        multiplier = 1.0 # Default assumption is billions if not specified, or raw
+        if re.search(r'\b(?:trillion|billionen)\b', clean_no_parens, re.I) or " T" in clean_no_parens:
+            multiplier = 1000.0
+        elif re.search(r'\b(?:billion|mrd|milliarden)\b', clean_no_parens, re.I) or " B" in clean_no_parens:
+            multiplier = 1.0
+        elif re.search(r'\b(?:million|mio|millionen)\b', clean_no_parens, re.I) or " M" in clean_no_parens:
+            multiplier = 0.001
+        elif re.search(r'\b(?:lakh crore)\b', clean_no_parens, re.I):
+            multiplier = 1000.0
+        elif re.search(r'\b(?:crore)\b', clean_no_parens, re.I):
+            multiplier = 0.01
+
+        # Extract numerical value (handling commas and European periods)
+        # Check European comma decimal: e.g., "75,9 Mrd" or "22.465 Mio"
+        num_match = re.search(r'([0-9]{1,3}(?:[,\.][0-9]{3})*(?:[,\.][0-9]+)?|[0-9]+(?:[,\.][0-9]+)?)', clean_no_parens)
+        if not num_match:
+            return "UNKNOWN", 0.0, curr_symbol, curr_iso, period
+
+        raw_num = num_match.group(1)
+        # If European format with comma as decimal (e.g. 75,9)
+        if "," in raw_num and "." not in raw_num and len(raw_num.split(",")[-1]) <= 2:
+            std_num = raw_num.replace(",", ".")
+        # If European thousands dot with comma decimal (e.g. 22.465,50)
+        elif "." in raw_num and "," in raw_num and raw_num.find(".") < raw_num.find(","):
+            std_num = raw_num.replace(".", "").replace(",", ".")
+        else:
+            std_num = raw_num.replace(",", "")
+
+        try:
+            val_float = float(std_num) * multiplier
+        except ValueError:
+            return "UNKNOWN", 0.0, curr_symbol, curr_iso, period
+
+        # Format output string
+        if val_float >= 1000.0:
+            formatted_val = f"{val_float / 1000.0:.2f}".rstrip("0").rstrip(".")
+            formatted = f"{curr_symbol}{formatted_val}T ({period})"
+        elif 0.0 < val_float < 1.0:
+            formatted_val = f"{val_float * 1000.0:.1f}".rstrip("0").rstrip(".")
+            formatted = f"{curr_symbol}{formatted_val}M ({period})"
+        else:
+            formatted_val = f"{val_float:.3f}".rstrip("0").rstrip(".")
+            formatted = f"{curr_symbol}{formatted_val}B ({period})"
+        return formatted, val_float, curr_symbol, curr_iso, period
+
+
+class WorkforceNormalizer:
+    """Normalizes workforce scale, preserving ranges and reporting dates."""
+    @classmethod
+    def normalize(cls, raw: Optional[str], default_period: str = "") -> Tuple[str, int, str]:
+        if not raw or raw.strip().upper() in ["UNKNOWN", "NONE", "UNDISCLOSED", ""]:
+            return "UNKNOWN", 0, default_period or "Latest Disclosed Period"
+
+        clean = re.sub(r'<!--[\s\S]*?-->', '', raw)
+        clean = re.sub(r'<ref[^>]*>.*?</ref>', '', clean, flags=re.DOTALL)
+        clean = re.sub(r'<ref[^>]*/>', '', clean)
+        clean = clean.replace("&nbsp;", " ").strip()
+
+        # Check year in parentheses
+        year_match = re.search(r'\((?:FY\s*)?([0-9]{2,4}[^\)]*)\)', clean)
+        period = year_match.group(1).strip() if year_match else (default_period or "Latest Public Filing")
+
+        clean_no_parens = re.sub(r'\([^)]*\)', '', clean).strip()
+
+        # Check range pattern: e.g. "10,000–25,000" or "25,000 - 50,000"
+        range_match = re.search(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\s*[\-\–\—\sto]+\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)', clean_no_parens)
+        if range_match:
+            low_str = range_match.group(1).replace(",", "")
+            high_str = range_match.group(2).replace(",", "")
+            try:
+                high_int = int(high_str)
+                formatted = f"{int(low_str):,}–{high_int:,} ({period})"
+                return formatted, high_int, period
+            except ValueError:
+                pass
+
+        # Single number match
+        num_match = re.search(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)', clean_no_parens)
+        if num_match:
+            digits = num_match.group(1).replace(",", "")
+            try:
+                num_int = int(digits)
+                formatted = f"{num_int:,} ({period})"
+                return formatted, num_int, period
+            except ValueError:
+                pass
+
+        return clean.strip() or "UNKNOWN", 0, period
+
+
 class FactExtractor:
     """
-    Extracts structured, field-level corporate facts from discovered primary sources.
-    Respects parent vs subsidiary boundaries.
-    Never invents or defaults to Siemens data.
+    Universal, evidence-driven corporate intelligence extractor.
+    Operates without company-specific if-statements.
+    Scans discovered source text for technologies, executive stakeholders, and corporate triggers.
     """
+
+    KNOWN_TECH_CATALOG = [
+        ("Cloud Infrastructure", "Amazon Web Services (AWS)", r'\b(?:aws|amazon web services|ec2|s3|eks|lambda)\b'),
+        ("Cloud Infrastructure", "Microsoft Azure", r'\b(?:azure|microsoft cloud)\b'),
+        ("Cloud Infrastructure", "Google Cloud Platform (GCP)", r'\b(?:gcp|google cloud|bigquery)\b'),
+        ("Cloud Infrastructure", "Oracle Cloud Infrastructure (OCI)", r'\b(?:oci|oracle cloud)\b'),
+        ("Identity & Access", "Microsoft Entra ID", r'\b(?:entra id|azure ad|active directory)\b'),
+        ("Identity & Access", "Okta", r'\b(?:okta)\b'),
+        ("Identity & Access", "Ping Identity", r'\b(?:ping identity|pingfederate)\b'),
+        ("Endpoint Security", "CrowdStrike", r'\b(?:crowdstrike|falcon)\b'),
+        ("Endpoint Security", "Microsoft Defender", r'\b(?:microsoft defender|windows defender)\b'),
+        ("Network Security", "Palo Alto Networks", r'\b(?:palo alto|pan-os|prisma)\b'),
+        ("Network Security", "Cisco", r'\b(?:cisco|meraki|firepower)\b'),
+        ("Enterprise Applications", "SAP S/4HANA", r'\b(?:sap|s\/4hana|sap erp)\b'),
+        ("Enterprise Applications", "Salesforce", r'\b(?:salesforce|sfdc)\b'),
+        ("Enterprise Applications", "ServiceNow", r'\b(?:servicenow|itsm)\b'),
+        ("Workforce Collaboration", "Microsoft 365", r'\b(?:microsoft 365|office 365|teams)\b'),
+        ("Workforce Collaboration", "Google Workspace", r'\b(?:google workspace|g suite)\b')
+    ]
+
+    TRIGGER_PATTERNS = [
+        (
+            "M&A",
+            "Acquisition & Corporate Integration",
+            r'(?:completed the acquisition of|acquired|to acquire|agreed to buy|merger with|purchased)\s+([A-Z][a-zA-Z0-9\s,\.\-&]{2,40})',
+            "Corporate M&A creates urgent need to integrate acquired cloud workloads and users without extending vulnerable network VPNs.",
+            "Zscaler Zero Trust Exchange for rapid Day-1 post-merger integration."
+        ),
+        (
+            "AI",
+            "Generative AI & LLM Deployment",
+            r'(?:generative ai|artificial intelligence|large language model|copilot|multimodal|foundation model|machine learning platform)\s*([A-Za-z0-9\s,\.\-&]{0,40})',
+            "Rapid rollout of generative AI and LLM APIs exposes sensitive enterprise data to exfiltration risks.",
+            "Zscaler for AI data security posture management (DSPM) and AI guardrails."
+        ),
+        (
+            "OT",
+            "Operational Technology & Industrial Edge",
+            r'(?:operational technology|industrial iot|smart factory|factory automation|iiot|industrial control|scada)',
+            "Converging operational technology (OT) with enterprise IT expands attack surfaces across production facilities.",
+            "Zscaler Zero Trust for OT and SCALANCE branch edge protection."
+        ),
+        (
+            "REGULATORY",
+            "Cybersecurity & Data Compliance Mandate",
+            r'(?:regulatory compliance|nis2 directive|gdpr compliance|data sovereignty|antitrust|sec disclosure requirement)',
+            "Stringent cybersecurity compliance deadlines demand auditable zero trust access verification.",
+            "Zscaler Zero Trust Exchange auditable access controls and localized data routing."
+        ),
+        (
+            "DIGITAL_TRANSFORMATION",
+            "Cloud Infrastructure Modernization",
+            r'(?:cloud migration|digital transformation|hybrid work|workforce modernization|legacy infrastructure overhaul)',
+            "Migrating workloads to hybrid cloud renders perimeter hardware firewalls and VPN backhauling obsolete.",
+            "Zscaler Internet Access (ZIA) and Private Access (ZPA) direct-to-cloud transformation."
+        )
+    ]
 
     @classmethod
     def extract(cls, account_id: str, entity: Dict[str, Any], sources: List[DiscoveredSource]) -> ExtractedFacts:
@@ -50,7 +254,16 @@ class FactExtractor:
         parent_name = entity.get("parent_company")
         parent_infobox: Dict[str, str] = entity.get("_parent_infobox", {})
 
-        # If infobox lacks revenue or key_people but parent_infobox has them, use them with explicit annotation
+        # Assemble full text corpus for generic entity discovery
+        text_corpus_lines = [wiki_extract] if wiki_extract else []
+        for s in sources:
+            if s.raw_content:
+                text_corpus_lines.append(s.raw_content)
+        for k, v in infobox.items():
+            text_corpus_lines.append(f"{k}: {v}")
+        full_text_corpus = "\n".join(text_corpus_lines)
+
+        # If infobox lacks revenue but parent_infobox has it, use it with explicit parent attribution
         if not infobox.get("revenue") and parent_infobox.get("revenue"):
             infobox["revenue"] = parent_infobox["revenue"]
             infobox["revenue_year"] = parent_infobox.get("revenue_year", "")
@@ -70,7 +283,6 @@ class FactExtractor:
             facts.headquarters = "UNKNOWN"
             facts.headquarters_excerpt = f"Official global headquarters address not publicly confirmed in primary disclosures."
 
-        # Country
         facts.country = entity.get("country", "UNKNOWN")
 
         # 2. Industry & Description
@@ -81,101 +293,85 @@ class FactExtractor:
         if clean_ind and clean_ind != "UNKNOWN":
             facts.industry = clean_ind
         else:
-            facts.industry = "Enterprise Technology & Commercial Operations"
+            facts.industry = "Enterprise Operations & Commercial Services"
 
         if wiki_extract:
             facts.company_description = wiki_extract
         else:
             facts.company_description = f"{company_name} is a global enterprise operating in {facts.industry}."
 
-        # 3. Scale: Employee Count
+        # 3. Workforce Scale Normalization
         raw_emp = infobox.get("num_employees") or infobox.get("employees")
         emp_year = infobox.get("num_employees_year", "")
-        if raw_emp:
-            # Extract potential year in parentheses e.g. (FY26) or (2025)
-            year_match = re.search(r'\((?:FY\s*)?([0-9]{2,4})\)', raw_emp)
-            if year_match and not emp_year:
-                emp_year = year_match.group(0).strip("()")
-            
-            # Clean comments and parenthetical year before extracting count
-            clean_emp = re.sub(r'<!--[\s\S]*?-->', '', raw_emp)
-            clean_emp_no_parens = re.sub(r'\([^)]*\)', '', clean_emp)
-            num_match = re.search(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)', clean_emp_no_parens)
-            if num_match:
-                count_str = num_match.group(1).replace(',', '')
-                facts.workforce_numeric = int(count_str)
-                facts.global_workforce = f"{int(count_str):,}"
-                if emp_year:
-                    facts.global_workforce += f" ({emp_year})"
-                facts.workforce_year = emp_year or "Latest Public Filing"
-                facts.workforce_excerpt = f"{company_name} reports an active workforce of approximately {facts.global_workforce}."
-            else:
-                facts.global_workforce = clean_emp.strip()
-                facts.workforce_excerpt = f"Reported employee count: {facts.global_workforce}."
+        formatted_emp, num_emp, emp_period = WorkforceNormalizer.normalize(raw_emp, default_period=emp_year)
+        facts.global_workforce = formatted_emp
+        facts.workforce_numeric = num_emp
+        facts.workforce_year = emp_period
+        if facts.global_workforce != "UNKNOWN":
+            facts.workforce_excerpt = f"{company_name} reports an active workforce of approximately {facts.global_workforce}."
         else:
-            facts.global_workforce = "UNKNOWN"
-            facts.workforce_excerpt = "Total workforce figures undisclosed in public registry filings."
+            facts.workforce_excerpt = f"Total workforce figures for {company_name} are undisclosed in public registry filings."
 
-        # 4. Financial Scale: Revenue
+        # 4. Financial Scale Normalization
         raw_rev = infobox.get("revenue")
         rev_year = infobox.get("revenue_year", "")
-        if raw_rev:
-            # Parse currency and billions
-            facts.revenue_year = rev_year or "Latest Fiscal Year"
-            # Extract numbers
-            num_match = re.search(r'([0-9]+(?:\.[0-9]+)?)', raw_rev)
-            if num_match:
-                facts.revenue_numeric_billions = float(num_match.group(1))
-            
-            curr_symbol = "$"
-            if "€" in raw_rev or "EUR" in raw_rev or "euro" in raw_rev.lower():
-                curr_symbol = "€"
-                facts.revenue_currency = "EUR"
-            elif "₹" in raw_rev or "INR" in raw_rev:
-                curr_symbol = "₹"
-                facts.revenue_currency = "INR"
+        formatted_rev, num_rev, curr_sym, curr_iso, rev_period = FinancialNormalizer.normalize(raw_rev, default_period=rev_year)
+        facts.annual_revenue = formatted_rev
+        facts.revenue_numeric_billions = num_rev
+        facts.revenue_currency = curr_iso
+        facts.revenue_currency_symbol = curr_sym
+        facts.revenue_year = rev_period
 
-            facts.annual_revenue = f"{curr_symbol}{facts.revenue_numeric_billions}B ({facts.revenue_year})"
-            
-            # If entity is subsidiary, explicitly annotate parent revenue
-            if entity.get("is_subsidiary") and parent_name:
-                facts.is_parent_revenue = True
-                facts.parent_company_name = parent_name
-                facts.annual_revenue = f"{curr_symbol}{facts.revenue_numeric_billions}B ({parent_name} Consolidated / {facts.revenue_year})"
+        if entity.get("is_subsidiary") and parent_name:
+            facts.is_parent_revenue = True
+            facts.parent_company_name = parent_name
+            if facts.annual_revenue != "UNKNOWN":
+                facts.annual_revenue = f"{curr_sym}{num_rev:.1f}B ({parent_name} Consolidated / {rev_period})"
                 facts.revenue_excerpt = f"Consolidated annual revenue reported under parent company {parent_name}: {facts.annual_revenue}."
             else:
-                facts.revenue_excerpt = f"{company_name} reported consolidated annual revenue of {facts.annual_revenue}."
+                facts.revenue_excerpt = f"Audited annual revenue figures for {company_name} are aggregated at parent company {parent_name} level."
+        elif facts.annual_revenue != "UNKNOWN":
+            facts.revenue_excerpt = f"{company_name} reported annual revenue of {facts.annual_revenue}."
         else:
-            facts.annual_revenue = "UNKNOWN"
-            facts.revenue_excerpt = f"Official audited annual revenue figures are not disclosed or are aggregated at subsidiary level."
+            facts.revenue_excerpt = f"Audited annual revenue figures for {company_name} are undisclosed or not publicly published in current registries."
 
-        # 5. Extract Leadership / Executive Contacts
+        # Operating Income & Net Income
+        raw_op_inc = infobox.get("operating_income")
+        if raw_op_inc:
+            facts.operating_income, _, _, _, _ = FinancialNormalizer.normalize(raw_op_inc, default_period=rev_period)
+        raw_net_inc = infobox.get("net_income")
+        if raw_net_inc:
+            facts.net_income, _, _, _, _ = FinancialNormalizer.normalize(raw_net_inc, default_period=rev_period)
+
+        # 5. Universal Contact Intelligence Discovery
         raw_people = infobox.get("key_people", "")
         if raw_people:
-            # Split lines
             people_lines = re.split(r'[\r\n]+', raw_people)
             seen_names = set()
             for line in people_lines:
                 clean_line = re.sub(r'<!--[\s\S]*?-->', '', line).strip().lstrip("|*-• ").strip()
                 if not clean_line or len(clean_line) < 3 or clean_line.lower().startswith("ubl") or clean_line.lower().startswith("unbulleted"):
                     continue
-                
+
+                # Clean wikitext brackets
+                clean_line = re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', clean_line)
+
                 # Extract clean name
                 name_match = re.match(r'^([A-Z][a-zA-Z\.\s\-\'\’]+?)(?:\s*\(|$)', clean_line)
                 if not name_match:
                     continue
-                
+
                 name = name_match.group(1).strip()
                 name_words = name.split()
                 if len(name_words) < 2 or len(name_words) > 5 or name in seen_names:
                     continue
-                
+
                 seen_names.add(name)
-                
-                # Determine title from remainder of line
+
+                # Determine designation from remainder of line
                 raw_title = clean_line[len(name):].strip()
                 raw_title_lower = raw_title.lower()
-                
+
                 title = "Executive Leadership"
                 if "executive chair" in raw_title_lower or "chair" in raw_title_lower:
                     title = "Executive Chairman"
@@ -195,28 +391,40 @@ class FactExtractor:
                     title = "Managing Director"
                 elif "founder" in raw_title_lower:
                     title = "Founder & Board Member"
+                elif "scientist" in raw_title_lower:
+                    title = "Chief Scientist"
                 elif "(" in raw_title and ")" in raw_title:
                     clean_t = re.sub(r'[\(\)]', '', raw_title).strip()
                     if clean_t:
                         title = clean_t[:50]
 
+                # Functional Buying Role mapping based on responsibility, not seniority
                 role = "ECONOMIC_BUYER"
                 dept = "Executive Board"
                 prio = f"Enterprise growth, operational governance, and strategic market expansion for {company_name}."
-                
+                score = 86.0
+
                 title_lower = title.lower()
-                if any(t in title_lower for t in ["cto", "technology", "architect", "engineering", "technologist"]):
+                if any(t in title_lower for t in ["cio", "information officer", "infrastructure", "head of it"]):
+                    role = "CHAMPION"
+                    dept = "IT Infrastructure"
+                    prio = "Direct-to-cloud workforce connectivity, legacy network modernization, and SaaS agility."
+                    score = 96.0
+                elif any(t in title_lower for t in ["cto", "technology officer", "architect", "engineering", "technologist"]):
                     role = "TECHNICAL_DECISION_MAKER"
                     dept = "Engineering & Technology"
                     prio = "Cloud architecture, technical modernization, and scalable software delivery."
-                elif any(t in title_lower for t in ["cio", "information", "infrastructure"]):
-                    role = "CHAMPION"
-                    dept = "IT Infrastructure"
-                    prio = "Hybrid workforce connectivity, SaaS agility, and legacy network modernization."
-                elif any(t in title_lower for t in ["ciso", "security", "cyber", "privacy"]):
+                    score = 92.0
+                elif any(t in title_lower for t in ["ciso", "security officer", "cyber", "privacy"]):
                     role = "BLOCKER"
                     dept = "Cybersecurity & Risk"
-                    prio = "Zero-trust verification, data protection, and regulatory security compliance."
+                    prio = "Zero-trust verification, data loss prevention, and regulatory security compliance."
+                    score = 88.0
+                elif any(t in title_lower for t in ["cpo", "procurement", "sourcing"]):
+                    role = "PROCUREMENT_APPROVER"
+                    dept = "Strategic Sourcing"
+                    prio = "Vendor consolidation, software licensing optimization, and contract governance."
+                    score = 82.0
 
                 facts.contacts.append({
                     "name": name,
@@ -225,78 +433,91 @@ class FactExtractor:
                     "role": role,
                     "influence": "HIGH" if role in ["ECONOMIC_BUYER", "CHAMPION"] else "MEDIUM",
                     "priority": prio,
-                    "score": 92.0 if role == "CHAMPION" else (90.0 if role == "TECHNICAL_DECISION_MAKER" else 86.0)
+                    "score": score
                 })
 
-        # 6. Technology Vendors & Cloud Infrastructure
-        # Determine verified cloud/tech signals based on company identity
-        name_lower = company_name.lower()
-        if "amazon" in name_lower or "aws" in name_lower:
-            facts.technologies = [
-                ("Cloud Infrastructure", "Amazon Web Services (AWS)", "Core proprietary public cloud and global edge network.", "CONFIRMED_CURRENT", 1.0, "VERIFIED"),
-                ("Container & Workload", "AWS ECS / EKS / Lambda", "Serverless and Kubernetes infrastructure powering global e-commerce and media streaming.", "CONFIRMED_CURRENT", 0.95, "VERIFIED"),
-                ("Corporate Identity", "AWS IAM / Internal Directory", "Enterprise identity and access management for corporate and fulfillment workforce.", "CONFIRMED_CURRENT", 0.90, "CORROBORATED"),
-                ("Perimeter & Security", "Internal Distributed Firewalls & WAF", "Proprietary perimeter security and DDoS mitigation infrastructure.", "CONFIRMED_CURRENT", 0.85, "CORROBORATED"),
-                ("Zero Trust Access", "UNKNOWN", "Enterprise remote-access and ZTNA adoption for corporate workforce undisclosed in public filings.", "UNKNOWN", 0.40, "UNKNOWN")
-            ]
-        elif "google" in name_lower or "alphabet" in name_lower:
-            facts.technologies = [
-                ("Cloud Infrastructure", "Google Cloud Platform (GCP)", "Primary public cloud and planetary distributed compute infrastructure.", "CONFIRMED_CURRENT", 1.0, "VERIFIED"),
-                ("Zero Trust Security", "BeyondCorp Enterprise", "Pioneered context-aware, zero-trust remote access model for global workforce.", "CONFIRMED_CURRENT", 0.95, "VERIFIED"),
-                ("Workforce Productivity", "Google Workspace", "Enterprise collaboration, Docs, Gmail, and Meet.", "CONFIRMED_CURRENT", 1.0, "VERIFIED"),
-                ("Security Operations", "Chronicle / Google SecOps", "Cloud-native SIEM and telemetry analysis.", "CONFIRMED_CURRENT", 0.90, "CORROBORATED"),
-                ("Multi-Cloud SASE", "UNKNOWN", "Third-party SASE and enterprise SWG interoperability details UNKNOWN.", "UNKNOWN", 0.40, "UNKNOWN")
-            ]
-        elif "microsoft" in name_lower:
-            facts.technologies = [
-                ("Cloud Infrastructure", "Microsoft Azure", "Hyper-scale enterprise cloud supporting global services and OpenAI workloads.", "CONFIRMED_CURRENT", 1.0, "VERIFIED"),
-                ("Identity", "Microsoft Entra ID", "Global enterprise IdP and conditional access governance.", "CONFIRMED_CURRENT", 1.0, "VERIFIED"),
-                ("Productivity", "Microsoft 365", "Office, Teams, and cloud collaboration.", "CONFIRMED_CURRENT", 1.0, "VERIFIED"),
-                ("Security", "Microsoft Defender & Sentinel", "XDR and cloud SIEM for enterprise threat detection.", "CONFIRMED_CURRENT", 0.95, "VERIFIED")
-            ]
-        else:
-            # Generic verified multi-cloud / enterprise tech stack
-            facts.technologies = [
-                ("Cloud Infrastructure", "Multi-Cloud (AWS / Azure)", "Public technical disclosures indicate multi-cloud presence for customer-facing systems.", "INFERENCE", 0.75, "INFERRED"),
-                ("Enterprise ERP", "SAP / Oracle", "Core operational planning and financial management backbone.", "INFERENCE", 0.70, "INFERRED"),
-                ("Corporate Identity", "Enterprise IdP (SAML / SSO)", "Single sign-on deployed across corporate workforce.", "INFERENCE", 0.70, "INFERRED"),
-                ("Secure Web Gateway", "UNKNOWN", "Incumbent proxy or SWG vendor undisclosed in public disclosures.", "UNKNOWN", 0.40, "UNKNOWN"),
-                ("Zero Trust Network Access", "UNKNOWN", "Enterprise zero-trust application segmentation status UNKNOWN.", "UNKNOWN", 0.40, "UNKNOWN")
-            ]
+        # 6. Universal Evidence-Based Technology Scanning (Zero hardcoded company names)
+        discovered_techs = []
+        for cat, vendor, pattern in cls.KNOWN_TECH_CATALOG:
+            m = re.search(pattern, full_text_corpus, re.I)
+            if m:
+                # Find the sentence containing the match for evidence excerpt
+                start = max(0, m.start() - 60)
+                end = min(len(full_text_corpus), m.end() + 60)
+                snippet = full_text_corpus[start:end].replace("\n", " ").strip()
+                discovered_techs.append((
+                    cat,
+                    vendor,
+                    f"Verified disclosure: '{snippet}'",
+                    "CONFIRMED_CURRENT",
+                    0.90,
+                    "VERIFIED"
+                ))
 
-        # 7. Strategic Priorities & Business Triggers
-        if "amazon" in name_lower:
-            facts.priorities = [
-                ("AWS Generative AI Acceleration", "AI Adoption", "Expanding custom silicon (Trainium/Inferentia) and Amazon Bedrock foundation models.", "Zscaler AI Guardrails and data security posture management for training datasets."),
-                ("Global Supply Chain Automation", "Operational Efficiency", "Robotics and AI-driven fulfillment center optimization.", "Zero trust segmentation between warehouse IoT devices and corporate networks."),
-                ("Enterprise Cloud Workload Security", "Cloud Security", "Securing multi-tenant microservices across global AWS regions.", "Zscaler Workload Communications for VPC-to-VPC inspection.")
-            ]
-            facts.triggers = [
-                ("Amazon Bedrock & GenAI Enterprise Expansion", "Product Launch", "2024-09-15", f"{company_name} expanded generative AI services for enterprise cloud clients.", "Accelerates customer adoption of LLM APIs, increasing data loss prevention urgency.", "Head of AWS Security, Enterprise CIOs", "Zscaler for AI data-loss prevention."),
-                ("Corporate Real Estate & Hybrid Working Alignment", "Organizational Realignment", "2024-10-01", f"{company_name} implemented updated global workforce office guidelines.", "Demands consistent security policy regardless of employee location.", "VP Global Workplace, CIO", "ZIA & ZDX user experience monitoring.")
-            ]
-        elif "google" in name_lower or "alphabet" in name_lower:
-            facts.priorities = [
-                ("Gemini Enterprise AI Integration", "AI Adoption", "Deeply embedding Gemini models across Google Workspace and Google Cloud infrastructure.", "Zscaler DLP to prevent prompt data exfiltration from enterprise customers."),
-                ("Global Sovereign Cloud & Compliance", "Regulatory Compliance", "Meeting stringent European and regional data residency and sovereign cloud mandates.", "Zscaler Zero Trust Exchange localized data routing and encryption."),
-                ("Zero-Trust Infrastructure Resilience", "Cybersecurity", "Maintaining defense-in-depth across global distributed datacenters.", "Securing third-party developer and contractor access into cloud environments.")
-            ]
-            facts.triggers = [
-                ("Gemini 1.5 Enterprise Ecosystem Deployment", "Product Launch", "2024-10-10", "Rapid rollout of multimodal Gemini models to global enterprise customers.", "Increases regulatory scrutiny on model data leakage and AI risk governance.", "Chief Technologist, CISO", "Zscaler AI Data Security Posture Management."),
-                ("Regulatory Antitrust & Compliance Restructuring", "Regulatory Compliance", "2024-11-01", "Compliance window addressing global digital market regulations and data boundaries.", "Requires auditable identity and data access segmentation across business units.", "General Counsel, CISO", "Zero Trust access logging and policy controls.")
-            ]
-        else:
-            facts.priorities = [
-                ("Cloud Modernization & Application Agility", "Cloud Transformation", f"Modernizing core enterprise applications and digital services for {company_name}.", "Zero Trust architecture to accelerate cloud workload migration."),
-                ("Enterprise Cyber Resilience", "Cybersecurity", f"Protecting {company_name}'s distributed workforce and sensitive proprietary assets.", "Zscaler Zero Trust Exchange for direct-to-cloud security without VPN latency.")
-            ]
-            facts.triggers = [
-                ("Digital Transformation & Hybrid Cloud Modernization", "Digital Transformation", datetime.datetime.utcnow().strftime("%Y-%m-%d"), f"{company_name} ongoing initiative to modernize distributed IT environments.", "Creates critical opportunity to replace legacy perimeter network hardware with cloud-native zero trust.", "CIO, Head of Infrastructure", "Zscaler ZIA and ZPA deployment.")
-            ]
+        # Ensure standard zero-trust and proxy categories are represented (with UNKNOWN if unmentioned)
+        standard_categories = ["Secure Web Gateway", "Zero Trust Network Access", "Data Protection & DSPM"]
+        existing_cats = {t[0] for t in discovered_techs}
+        for std_cat in standard_categories:
+            if std_cat not in existing_cats:
+                discovered_techs.append((
+                    std_cat,
+                    "UNKNOWN",
+                    f"Incumbent vendor for {std_cat} is undisclosed in public corporate disclosures.",
+                    "UNKNOWN",
+                    0.40,
+                    "UNKNOWN"
+                ))
 
-        # 8. Compile Evidence Claims
-        today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        
+        facts.technologies = discovered_techs
+
+        # 7. Universal Evidence-Based Corporate Trigger Scanning (Zero hardcoded company names)
+        discovered_triggers = []
+        today = get_current_date()
+
+        for ev_type, default_title, pattern, impact, use_case in cls.TRIGGER_PATTERNS:
+            m = re.search(pattern, full_text_corpus, re.I)
+            if m:
+                # Extract matched text
+                matched_item = m.group(1).strip() if m.groups() and m.group(1) else default_title
+                matched_title = f"{matched_item[:60]}" if len(matched_item) > 3 else default_title
+                start = max(0, m.start() - 50)
+                end = min(len(full_text_corpus), m.end() + 80)
+                snippet = full_text_corpus[start:end].replace("\n", " ").strip()
+
+                discovered_triggers.append((
+                    matched_title,
+                    ev_type,
+                    today,
+                    f"Verified catalyst: '{snippet}'",
+                    impact,
+                    "Executive Leadership, CIO, CISO",
+                    use_case
+                ))
+
+        # If zero or one trigger discovered from source text, append an honest baseline
+        if len(discovered_triggers) == 0:
+            discovered_triggers.append((
+                "Enterprise Modernization & Secure Cloud Scaling",
+                "DIGITAL_TRANSFORMATION",
+                today,
+                f"{company_name} ongoing digital infrastructure modernization and hybrid cloud scaling.",
+                "Creates opportunity to migrate from legacy network perimeters to cloud-native zero trust.",
+                "CIO, Head of Infrastructure",
+                "Zscaler Zero Trust Exchange deployment."
+            ))
+
+        facts.triggers = discovered_triggers
+
+        # Generate Strategic Priorities from discovered triggers
+        for trig in facts.triggers[:3]:
+            facts.priorities.append((
+                trig[0],
+                trig[1],
+                trig[3],
+                trig[6]
+            ))
+
+        # 8. Compile Field-Level Evidence Claims
         # HQ Claim
         facts.evidence_claims.append({
             "id": f"claim-{account_id}-hq",

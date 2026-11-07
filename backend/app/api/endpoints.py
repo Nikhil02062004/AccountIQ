@@ -212,46 +212,65 @@ def trigger_new_research(
     db: Session = Depends(get_db)
 ):
     clean_name = req.company_name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Company name cannot be empty.")
+
     account_slug = clean_name.lower().replace(" ", "-").replace(".", "").replace(",", "")
     
+    # Sanitize industry input (normalize "Automatic" to None for automated discovery)
+    clean_industry = None
+    if req.industry and req.industry.strip().lower() not in ["automatic", "auto", "default", "none", "n/a", ""]:
+        clean_industry = req.industry.strip()
+
     # Check if account already exists
     existing = db.query(Account).filter(Account.id == account_slug).first()
-    if existing:
-        # Check existing run
-        last_run = db.query(ResearchRun).filter(ResearchRun.account_id == account_slug).order_by(ResearchRun.created_at.desc()).first()
-        if last_run and last_run.status == "COMPLETED":
-            parsed_logs = []
-            if last_run.logs_json:
-                try:
-                    parsed_logs = json.loads(last_run.logs_json)
-                except Exception:
-                    try:
-                        parsed_logs = eval(last_run.logs_json)
-                    except Exception:
-                        parsed_logs = [last_run.logs_json]
-            return ResearchProgressResponse(
-                run_id=last_run.id,
-                account_id=account_slug,
-                company_query=clean_name,
-                status=last_run.status,
-                current_step=last_run.current_step,
-                progress_pct=last_run.progress_pct,
-                logs=parsed_logs,
-                error_message=last_run.error_message
-            )
+    
+    # Check if an active research run is currently in progress
+    active_run = db.query(ResearchRun).filter(
+        ResearchRun.account_id == account_slug,
+        ResearchRun.status == "RUNNING"
+    ).order_by(ResearchRun.created_at.desc()).first()
 
-    # Create new account stub
-    account = Account(
-        id=account_slug,
-        name=clean_name,
-        legal_name=f"{clean_name} Inc.",
-        industry=req.industry or "Enterprise Technology & Manufacturing",
-        is_existing_customer=req.is_existing_customer,
-        customer_type=req.customer_type or ("Existing Customer / Expansion" if req.is_existing_customer else "New Logo Prospect"),
-        verdict_summary=f"Automated intelligence gathering in progress for {clean_name}."
-    )
-    db.add(account)
-    db.flush()
+    if active_run:
+        parsed_logs = []
+        if active_run.logs_json:
+            try:
+                parsed_logs = json.loads(active_run.logs_json)
+            except Exception:
+                parsed_logs = [active_run.logs_json]
+        return ResearchProgressResponse(
+            run_id=active_run.id,
+            account_id=account_slug,
+            company_query=clean_name,
+            status=active_run.status,
+            current_step=active_run.current_step,
+            progress_pct=active_run.progress_pct,
+            logs=parsed_logs,
+            error_message=active_run.error_message
+        )
+
+    # Reuse existing account record or initialize new stub without duplicate key violation
+    if existing:
+        account = existing
+        if clean_industry:
+            account.industry = clean_industry
+        account.is_existing_customer = req.is_existing_customer
+        if req.customer_type:
+            account.customer_type = req.customer_type
+        account.updated_at = datetime.datetime.now(datetime.timezone.utc)
+        db.commit()
+    else:
+        account = Account(
+            id=account_slug,
+            name=clean_name,
+            legal_name=f"{clean_name} Inc.",
+            industry=clean_industry or "Enterprise Operations & Technology",
+            is_existing_customer=req.is_existing_customer,
+            customer_type=req.customer_type or ("Existing Customer / Expansion" if req.is_existing_customer else "New Logo Prospect"),
+            verdict_summary=f"Automated intelligence gathering in progress for {clean_name}."
+        )
+        db.add(account)
+        db.commit()
 
     run_id = f"run-{uuid.uuid4().hex[:8]}"
     run_record = ResearchRun(
@@ -261,7 +280,7 @@ def trigger_new_research(
         status="RUNNING",
         current_step="INITIALIZING",
         progress_pct=10,
-        logs_json=json.dumps([f"[{datetime.datetime.utcnow().strftime('%H:%M:%S')}] Started research task for {clean_name}."])
+        logs_json=json.dumps([f"[{datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M:%S')}] Started research task for {clean_name}."])
     )
     db.add(run_record)
     db.commit()
@@ -273,7 +292,7 @@ def trigger_new_research(
         run_id=run_id,
         account_id=account_slug,
         company_name=clean_name,
-        industry=req.industry,
+        industry=clean_industry,
         is_existing_customer=req.is_existing_customer,
         customer_type=account.customer_type
     )

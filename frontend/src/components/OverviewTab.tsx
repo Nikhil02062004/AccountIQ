@@ -55,7 +55,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ account, onNavigateToT
             </div>
             <div>
               <div className="text-xs font-medium text-slate-500">Global Workforce</div>
-              <div className="text-sm font-bold text-slate-900">{account.global_workforce || "312,000 Seats"}</div>
+              <div className="text-sm font-bold text-slate-900">{account.global_workforce || "UNKNOWN"}</div>
             </div>
           </div>
 
@@ -65,7 +65,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ account, onNavigateToT
             </div>
             <div>
               <div className="text-xs font-medium text-slate-500">Annual Revenue</div>
-              <div className="text-sm font-bold text-slate-900">{account.annual_revenue || "€75.9 Billion"}</div>
+              <div className="text-sm font-bold text-slate-900">{account.annual_revenue || "UNKNOWN"}</div>
             </div>
           </div>
 

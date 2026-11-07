@@ -160,3 +160,87 @@ def test_siemens_flagship_remains_intact():
     assert rec is not None
     assert "Altair" in rec.outreach_angle or "Altair" in rec.why_now
     db.close()
+
+def test_financial_normalization_multi_currency():
+    """Tests financial normalizer across multi-currency figures, European notations, and missing values."""
+    from backend.app.discovery.fact_extractor import FinancialNormalizer
+
+    # European millions: €22,465 million -> 22.465B EUR
+    fmt, val, sym, iso, per = FinancialNormalizer.normalize("€22,465 million", default_period="FY2025")
+    assert val == 22.465
+    assert iso == "EUR"
+    assert "€22.465B" in fmt
+
+    # US Billions: US$ 716.9 billion (2025)
+    fmt, val, sym, iso, per = FinancialNormalizer.normalize("US$ 716.9 billion (2025)")
+    assert val == 716.9
+    assert iso == "USD"
+    assert "$716.9B" in fmt
+    assert "2025" in per
+
+    # British Pounds: £15.2 billion (2024)
+    fmt, val, sym, iso, per = FinancialNormalizer.normalize("£15.2 billion (2024)")
+    assert val == 15.2
+    assert iso == "GBP"
+    assert "£15.2B" in fmt
+
+    # Swiss Francs: CHF 29.8 billion
+    fmt, val, sym, iso, per = FinancialNormalizer.normalize("CHF 29.8 billion")
+    assert val == 29.8
+    assert iso == "CHF"
+
+    # Missing value MUST remain UNKNOWN, never $0.0B
+    fmt, val, sym, iso, per = FinancialNormalizer.normalize(None)
+    assert fmt == "UNKNOWN"
+    assert val == 0.0
+
+def test_workforce_normalization_ranges_and_dates():
+    """Tests workforce normalizer preserving ranges and extracting reporting periods."""
+    from backend.app.discovery.fact_extractor import WorkforceNormalizer
+
+    # Single figure with FY
+    fmt, num, per = WorkforceNormalizer.normalize("42,000 (FY26)")
+    assert num == 42000
+    assert "42,000" in fmt
+
+    # Preserving range
+    fmt, num, per = WorkforceNormalizer.normalize("10,000–25,000")
+    assert "10,000" in fmt and "25,000" in fmt
+    assert num == 25000
+
+    # Missing remains UNKNOWN
+    fmt, num, per = WorkforceNormalizer.normalize(None)
+    assert fmt == "UNKNOWN"
+    assert num == 0
+
+def test_central_data_quality_gate():
+    """Tests DataQualityGate enforcement for valid, partial, and rejected entities."""
+    from backend.app.engine.quality_gate import DataQualityGate
+    from backend.app.discovery.fact_extractor import ExtractedFacts
+    from backend.app.discovery.source_discovery import DiscoveredSource
+
+    # 1. Unresolved entity must FAIL
+    unresolved_entity = {"is_resolved": False, "query": "Unknown Nonexistent Firm"}
+    res = DataQualityGate.evaluate("unknown", unresolved_entity, [], ExtractedFacts())
+    assert res.is_valid is False
+    assert res.pipeline_status == "FAILED"
+
+    # 2. Resolved entity with partial fields becomes PARTIALLY_COMPLETED
+    resolved_entity = {"is_resolved": True, "canonical_name": "Test Firm"}
+    sources = [DiscoveredSource(id="s1", name="Src", url="https://test.com", source_type="OFFICIAL_WEBSITE")]
+    partial_facts = ExtractedFacts()
+    partial_facts.headquarters = "London, UK"
+    partial_facts.annual_revenue = "UNKNOWN" # Missing revenue
+    res_partial = DataQualityGate.evaluate("test", resolved_entity, sources, partial_facts)
+    assert res_partial.is_valid is True
+    assert res_partial.pipeline_status == "PARTIALLY_COMPLETED"
+    assert "annual_revenue" in res_partial.unknown_fields
+
+@pytest.mark.asyncio
+async def test_it_services_resolution_capgemini():
+    """Tests generic identity resolution for an IT Services firm (Capgemini)."""
+    capgemini = await EntityResolver.resolve("Capgemini")
+    assert capgemini["is_resolved"] is True
+    assert "paris" in capgemini["headquarters"].lower() or "france" in capgemini["headquarters"].lower()
+    assert "consulting" in capgemini["industry"].lower() or "information technology" in capgemini["industry"].lower() or "services" in capgemini["industry"].lower()
+

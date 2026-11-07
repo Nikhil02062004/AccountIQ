@@ -31,7 +31,11 @@ export const NewResearchModal: React.FC<NewResearchModalProps> = ({
         try {
           const updated = await checkResearchProgress(activeRun.run_id);
           setActiveRun(updated);
-          if (updated.status === "COMPLETED" || updated.status === "FAILED") {
+          if (
+            updated.status === "COMPLETED" ||
+            updated.status === "PARTIALLY_COMPLETED" ||
+            updated.status === "FAILED"
+          ) {
             clearInterval(interval);
           }
         } catch (e: any) {
@@ -48,14 +52,23 @@ export const NewResearchModal: React.FC<NewResearchModalProps> = ({
 
   const handleStartResearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyName.trim()) return;
+    if (!companyName.trim()) {
+      setError("Please enter a valid company name to initiate research.");
+      return;
+    }
 
     setError(null);
     setIsSubmitting(true);
     try {
+      const cleanInd = industry.trim();
+      const industryPayload =
+        !cleanInd || cleanInd.toLowerCase() === "automatic"
+          ? undefined
+          : cleanInd;
+
       const res = await startNewResearch({
         company_name: companyName.trim(),
-        industry: industry.trim() || undefined,
+        industry: industryPayload,
         is_existing_customer: isExisting,
       });
       setActiveRun(res);
@@ -193,11 +206,15 @@ export const NewResearchModal: React.FC<NewResearchModalProps> = ({
             </div>
 
             {/* Completion or Error State */}
-            {activeRun.status === "COMPLETED" ? (
+            {activeRun.status === "COMPLETED" || activeRun.status === "PARTIALLY_COMPLETED" ? (
               <div className="pt-2 flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-emerald-700 font-semibold">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Dossier generated successfully!</span>
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <CheckCircle2 className={`w-4 h-4 ${activeRun.status === "COMPLETED" ? "text-emerald-700" : "text-amber-600"}`} />
+                  <span className={activeRun.status === "COMPLETED" ? "text-emerald-800" : "text-amber-800"}>
+                    {activeRun.status === "COMPLETED"
+                      ? "Dossier generated successfully!"
+                      : "Dossier generated (undisclosed public metrics flagged as UNKNOWN)"}
+                  </span>
                 </div>
                 <button
                   onClick={handleFinish}
@@ -208,8 +225,14 @@ export const NewResearchModal: React.FC<NewResearchModalProps> = ({
                 </button>
               </div>
             ) : activeRun.status === "FAILED" ? (
-              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs">
-                {activeRun.error_message || "Research pipeline failed"}
+              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-1">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>Research pipeline could not be completed</span>
+                </div>
+                <div className="text-[11px] text-rose-700 pl-5">
+                  {activeRun.error_message || "The research pipeline encountered an error. Please verify the entity name and check backend logs."}
+                </div>
               </div>
             ) : null}
           </div>

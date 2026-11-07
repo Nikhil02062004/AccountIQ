@@ -20,6 +20,13 @@ from backend.app.engine.recommendation_engine import RecommendationEngine
 from backend.app.discovery.entity_resolver import EntityResolver
 from backend.app.discovery.source_discovery import SourceDiscoveryManager, DiscoveredSource
 from backend.app.discovery.fact_extractor import FactExtractor, ExtractedFacts
+from backend.app.engine.quality_gate import DataQualityGate, QualityGateResult
+
+def get_current_date() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
+def get_current_time() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S")
 
 class AccountResearchPipeline:
     """
@@ -118,6 +125,21 @@ class AccountResearchPipeline:
             # Stage 3: Field-Level Fact & Metric Extraction
             log_step("EXTRACTION", 60, f"Extracting verified financials, workforce scale, and technology footprint from {len(source_objs)} sources...")
             facts: ExtractedFacts = FactExtractor.extract(account_id, resolved_entity, discovered_sources)
+
+            # Central Pre-Publish Quality Gate
+            gate_res = DataQualityGate.evaluate(account_id, resolved_entity, discovered_sources, facts)
+            if not gate_res.is_valid:
+                log_step("QUALITY_GATE_REJECTED", 80, f"Quality gate rejection: {'; '.join(gate_res.errors)}")
+                acc = db.query(Account).filter(Account.id == account_id).first()
+                if acc:
+                    acc.verdict_summary = f"Research incomplete: {'; '.join(gate_res.errors)}"
+                run_record.status = "FAILED"
+                run_record.error_message = "; ".join(gate_res.errors)
+                db.commit()
+                return
+
+            if gate_res.warnings:
+                log_step("QUALITY_GATE_WARNINGS", 70, f"Transparent data boundaries: {'; '.join(gate_res.warnings)}")
 
             # Stage 4: Update Account Entity
             log_step("ACCOUNT_UPDATE", 75, f"Updating account record with field-level provenance and isolated metrics...")
@@ -381,14 +403,28 @@ class AccountResearchPipeline:
             db.add(rec_obj)
 
             # Finalize
-            log_step("COMPLETED", 100, f"Intelligence gathering complete for {canonical_name}! Comprehensive dossier ready.")
-            run_record.status = "COMPLETED"
-            run_record.completed_at = datetime.datetime.utcnow()
+            run_record.status = gate_res.pipeline_status
+            run_record.completed_at = datetime.datetime.now(datetime.timezone.utc)
+            log_step(run_record.status, 100, f"Intelligence gathering finished for {canonical_name} ({run_record.status})! Quality Score: {gate_res.quality_score}%.")
             db.commit()
 
         except Exception as e:
-            db.rollback()
-            run_record.status = "FAILED"
-            run_record.error_message = str(e)
-            log_step("FAILED", run_record.progress_pct, f"Error occurred during research pipeline: {str(e)}")
-            db.commit()
+            logger.error(f"Research pipeline error for {company_name}: {e}", exc_info=True)
+            try:
+                db.rollback()
+                failed_run = db.query(ResearchRun).filter(ResearchRun.id == run_id).first()
+                if failed_run:
+                    failed_run.status = "FAILED"
+                    failed_run.error_message = str(e)
+                    current_logs = []
+                    if failed_run.logs_json:
+                        try:
+                            current_logs = json.loads(failed_run.logs_json)
+                        except Exception:
+                            current_logs = [failed_run.logs_json]
+                    current_logs.append(f"[{datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M:%S')}] Research pipeline failed: {str(e)}")
+                    failed_run.logs_json = json.dumps(current_logs)
+                    failed_run.completed_at = datetime.datetime.now(datetime.timezone.utc)
+                    db.commit()
+            except Exception as inner_e:
+                logger.error(f"Failed to persist research run failure record: {inner_e}")

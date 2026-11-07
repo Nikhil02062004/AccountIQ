@@ -2,13 +2,16 @@ import asyncio
 import datetime
 import logging
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from abc import ABC, abstractmethod
 import httpx
 
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "AccountIQ-Bot/1.0 (https://bridgeai.ai; sahai.khunteta@bridgeai.ai) Mozilla/5.0"
+
+def get_current_date() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 class DiscoveredSource:
     def __init__(
@@ -29,8 +32,8 @@ class DiscoveredSource:
         self.name = name
         self.url = url
         self.source_type = source_type
-        self.publication_date = publication_date or datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        self.date_retrieved = date_retrieved or datetime.datetime.utcnow().strftime("%Y-%m-%d")
+        self.publication_date = publication_date or get_current_date()
+        self.date_retrieved = date_retrieved or get_current_date()
         self.author = author
         self.is_official = is_official
         self.reliability_weight = reliability_weight
@@ -42,6 +45,24 @@ class BaseSourceAdapter(ABC):
     @abstractmethod
     async def discover(self, account_id: str, entity: Dict[str, Any], client: httpx.AsyncClient) -> List[DiscoveredSource]:
         pass
+
+    async def fetch_with_retry(self, client: httpx.AsyncClient, url: str, **kwargs) -> Optional[httpx.Response]:
+        """Executes HTTP request with exponential backoff retry for transient network errors."""
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                res = await client.get(url, **kwargs)
+                if res.status_code < 500:
+                    return res
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                if attempt == max_retries:
+                    logger.info(f"Source adapter request timed out for {url}: {e}")
+                    return None
+                await asyncio.sleep(0.5 * (attempt + 1))
+            except Exception as e:
+                logger.warning(f"Unexpected request error for {url}: {e}")
+                return None
+        return None
 
 
 class WikipediaSourceAdapter(BaseSourceAdapter):
@@ -67,7 +88,7 @@ class WikipediaSourceAdapter(BaseSourceAdapter):
             name=f"Wikipedia Verified Public Record: {wiki_title}",
             url=url,
             source_type="REPUTABLE_BUSINESS_PRESS",
-            publication_date=datetime.datetime.utcnow().strftime("%Y-%m-%d"),
+            publication_date=get_current_date(),
             author="Wikipedia Wikimedia Contributors",
             is_official=False,
             reliability_weight=0.85,
@@ -107,7 +128,7 @@ class SecEdgarSourceAdapter(BaseSourceAdapter):
                         break
 
                 filing_url = f"https://www.sec.gov/edgar/browse/?CIK={cik_padded}"
-                pub_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+                pub_date = get_current_date()
                 form_type = "10-K Annual Report"
                 
                 if target_idx is not None:
@@ -167,7 +188,7 @@ class WebDomainSourceAdapter(BaseSourceAdapter):
                     name=f"Official Corporate Website: {doc_title}",
                     url=str(res.url),
                     source_type="OFFICIAL_WEBSITE",
-                    publication_date=datetime.datetime.utcnow().strftime("%Y-%m-%d"),
+                    publication_date=get_current_date(),
                     author=f"{name} Corporate Communications",
                     is_official=True,
                     reliability_weight=0.95,
@@ -182,7 +203,7 @@ class WebDomainSourceAdapter(BaseSourceAdapter):
                 name=f"{name} Corporate Domain",
                 url=website,
                 source_type="OFFICIAL_WEBSITE",
-                publication_date=datetime.datetime.utcnow().strftime("%Y-%m-%d"),
+                publication_date=get_current_date(),
                 author=f"{name} Corporate",
                 is_official=True,
                 reliability_weight=0.90,
@@ -194,7 +215,9 @@ class WebDomainSourceAdapter(BaseSourceAdapter):
 
 
 class SourceDiscoveryManager:
-    """Manages modular adapters and coordinates source discovery."""
+    """Manages modular adapters and coordinates source discovery with in-memory caching and deduplication."""
+    _cache: Dict[str, Tuple[str, List[DiscoveredSource]]] = {}
+
     def __init__(self):
         self.adapters: List[BaseSourceAdapter] = [
             WikipediaSourceAdapter(),
@@ -202,7 +225,14 @@ class SourceDiscoveryManager:
             WebDomainSourceAdapter()
         ]
 
-    async def discover_sources(self, account_id: str, entity: Dict[str, Any]) -> List[DiscoveredSource]:
+    async def discover_sources(self, account_id: str, entity: Dict[str, Any], use_cache: bool = True) -> List[DiscoveredSource]:
+        cache_key = f"{account_id}:{entity.get('canonical_name', '')}"
+        today = get_current_date()
+        if use_cache and cache_key in self._cache:
+            cached_date, cached_sources = self._cache[cache_key]
+            if cached_date == today and cached_sources:
+                return cached_sources
+
         async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": USER_AGENT}) as client:
             tasks = [adapter.discover(account_id, entity, client) for adapter in self.adapters]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -215,4 +245,6 @@ class SourceDiscoveryManager:
                         if src.url not in seen_urls:
                             seen_urls.add(src.url)
                             all_sources.append(src)
+            
+            self._cache[cache_key] = (today, all_sources)
             return all_sources

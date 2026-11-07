@@ -513,12 +513,30 @@ To ensure high resilience and 100% zero-cost operation without requiring commerc
 - **`WebDomainSourceAdapter`:** Verifies domain reachability, extracts OpenGraph metadata, title tags, and corporate meta descriptions.
 - **`SourceDiscoveryManager`:** Coordinates concurrent discovery across all adapters using `asyncio.gather`, tagging each discovered source with reliability weights and retrieval dates.
 
-### 6.3 Fact Extraction & Provenance Generation (`fact_extractor.py`)
-The `FactExtractor` converts raw discovery outputs into normalized database entities and individual `EvidenceClaim` audit records:
-- **Revenue Parsing:** Extracts numeric revenue, reporting currency (USD, EUR, INR), and fiscal year. For subsidiaries, automatically qualifies revenue as `(Parent Company Consolidated / Year)`.
-- **Workforce Scale:** Extracts exact reported employee counts, stripping parenthetical notes and citation tags to prevent digit concatenation.
-- **Executive Leadership & Roles:** Extracts real executive leadership from Infobox `key_people` (e.g., Jensen Huang, Andy Jassy, Sundar Pichai), stripping HTML comments and template markup, and maps each executive to a specific buying committee persona (`CHAMPION`, `ECONOMIC_BUYER`, `TECHNICAL_DECISION_MAKER`, or `BLOCKER`).
-- **Honest `UNKNOWN` Principle:** If a data point is not published in primary sources, it is explicitly set to `UNKNOWN`. Missing fields never cause the pipeline to hallucinate plausible numbers.
+### 6.3 Fact Extraction & Normalization Architecture (`fact_extractor.py`)
+The `FactExtractor` converts raw discovery outputs into normalized database entities and individual `EvidenceClaim` audit records using specialized normalizer engines:
+- **`FinancialNormalizer`:**
+  - Multi-Currency Support: Parses and normalizes financial filings across global currencies (USD `$`, EUR `€`, GBP `£`, INR `₹`, CHF, JPY `¥`, CAD `C$`, AUD `A$`).
+  - Unit Scalers: Correctly handles Trillions, Billions, Millions, Lakh Crores (₹), and Crores.
+  - Number Format Awareness: Accurately parses European comma-decimal notations (e.g., `€22,465 million` or `75,9 Mrd`) vs. Anglo-American formats.
+  - Zero-Hallucination & Currency Integrity: Never silently converts currencies or assumes exchange rates. If a company's revenue is undisclosed, it strictly outputs `UNKNOWN` (never `$0.0B` or synthetic placeholders).
+- **`WorkforceNormalizer`:**
+  - Extracts exact reported employee counts, isolates parenthetical fiscal periods (e.g., `42,000 (FY26)`), and strips citations to prevent digit concatenation.
+  - Range Preservation: Accurately preserves workforce scale ranges (e.g., `10,000–25,000 (2025)`).
+- **Universal Contact Intelligence Discovery:**
+  - Extracts real executive leadership from Infobox `key_people` (e.g., Jensen Huang, Andy Jassy, Sundar Pichai, Aiman Ezzat, Mukesh Ambani), stripping HTML breaks, comments, and template markup.
+  - Maps each executive to a functional buying committee persona based on operational domain rather than blind seniority:
+    - `CHAMPION`: Infrastructure, Cloud, Operations, Enterprise Architecture.
+    - `TECHNICAL_DECISION_MAKER`: Engineering, Technology, R&D, Platform.
+    - `ECONOMIC_BUYER`: CEO, Managing Director, CFO, Finance.
+    - `BLOCKER`: Chief Cybersecurity Officer, CISO, Risk & Compliance.
+    - `PROCUREMENT_APPROVER`: Procurement, Vendor Management, Sourcing.
+- **Dynamic Technology Stack Intelligence:**
+  - Scans discovered primary sources against a comprehensive vendor catalog (`AWS`, `Azure`, `GCP`, `Oracle Cloud`, `Okta`, `Microsoft Entra ID`, `CrowdStrike`, `Microsoft Defender`, `Palo Alto Networks`, `Cisco`, `SAP`, `Salesforce`, `ServiceNow`, `M365`, `Google Workspace`).
+  - When specific security layers (e.g. SWG, ZTNA, DSPM) are not mentioned in public filings, records explicit `UNKNOWN` entries rather than assuming third-party vendor deployments.
+- **Dynamic Business Trigger Scanner:**
+  - Scans source text for catalytic enterprise events across 5 strategic categories: M&A Transactions, Generative AI & Infrastructure Modernization, OT & Industrial Convergence, Regulatory & Compliance Mandates (NIS2, DORA, CRA), and Global Digital Transformations.
+  - Generates verifiable `TriggerEvent` records linked to primary source evidence.
 
 ### 6.4 The Evidence Validation Engine (`validator.py`)
 To prevent ungrounded claims from entering the system, the Validation Engine enforces strict provenance checks on every data element:
@@ -529,6 +547,19 @@ To prevent ungrounded claims from entering the system, the Validation Engine enf
    - `CORROBORATED`: The claim is confirmed by two or more independent business publications or reputable industry outlets.
    - `INFERRED`: Derived from analytical synthesis (e.g., Zscaler whitespace opportunity mapping).
    - `DISPUTED` / `UNVERIFIED`: The claim lacks verifiable primary evidence and is flagged or rejected.
+
+### 6.5 Central Data Quality Gate (`quality_gate.py`)
+To guarantee that no corrupt, corrupted, or cross-contaminated account data is ever committed to the database or displayed in the user interface, AccountIQ implements a central `DataQualityGate` layer:
+- **Pre-Commit Evaluation:** Evaluates every extraction candidate before committing records to the SQLite database.
+- **Strict Quality Rules:**
+  - **Schema Validation:** Asserts that the canonical name and account ID are present and non-empty.
+  - **Numeric Sanity:** Asserts that financial figures and employee counts are strictly non-zero if numeric fields are populated (rejecting `$0.0B` or negative counts).
+  - **Evidence Provenance:** Enforces that every verified claim contains a non-empty verbatim text excerpt.
+  - **Strict Account Isolation:** Enforces that every child entity (`EvidenceClaim`, `Contact`, `TriggerEvent`, `TechnologyVendor`) matches the primary `account_id` exactly.
+- **Three-Tier Research Classification:**
+  - `COMPLETED`: Account resolved, verified primary sources ingested, and both financial scale and workforce scale confirmed.
+  - `PARTIALLY_COMPLETED`: Account resolved with confirmed identity and partial metrics (e.g. undisclosed headcount in private filings), with missing fields explicitly tagged as `UNKNOWN`.
+  - `FAILED`: Identity resolution failed or invalid entity query, resulting in safe fallback with honest error reporting.
 
 ---
 
@@ -1002,33 +1033,38 @@ All 23 automated unit, integration, and generalization tests pass deterministica
 platform win32 -- Python 3.12.2, pytest-8.4.2, pluggy-1.7.0
 rootdir: C:\Users\d9f6t\OneDrive\Desktop\BridgeAI.ai
 configfile: pytest.ini
-collected 23 items
+plugins: anyio-4.16.0, asyncio-0.26.0
+collected 27 items
 
-backend/tests/test_dynamic_generalization.py::test_entity_resolution_us_public PASSED [  4%]
-backend/tests/test_dynamic_generalization.py::test_entity_resolution_parent_subsidiary PASSED [  8%]
-backend/tests/test_dynamic_generalization.py::test_entity_resolution_global_enterprises PASSED [ 13%]
-backend/tests/test_dynamic_generalization.py::test_entity_resolution_fictional_unknown PASSED [ 17%]
-backend/tests/test_dynamic_generalization.py::test_fact_extraction_no_siemens_leakage PASSED [ 21%]
-backend/tests/test_dynamic_generalization.py::test_recommendation_account_agnostic PASSED [ 26%]
-backend/tests/test_dynamic_generalization.py::test_recommendation_empty_contacts_honest_message PASSED [ 30%]
-backend/tests/test_dynamic_generalization.py::test_scoring_account_agnostic_timing PASSED [ 34%]
-backend/tests/test_dynamic_generalization.py::test_siemens_flagship_remains_intact PASSED [ 39%]
-backend/tests/test_all.py::test_1_account_creation PASSED                [ 43%]
-backend/tests/test_all.py::test_2_source_ingestion PASSED                [ 47%]
-backend/tests/test_all.py::test_3_evidence_extraction PASSED             [ 52%]
-backend/tests/test_all.py::test_4_evidence_to_claim_linking PASSED       [ 56%]
-backend/tests/test_all.py::test_5_contact_validation PASSED              [ 60%]
-backend/tests/test_all.py::test_6_confidence_classification PASSED       [ 65%]
-backend/tests/test_all.py::test_7_account_scoring PASSED                 [ 69%]
-backend/tests/test_all.py::test_8_buying_committee_graph_api PASSED      [ 73%]
-backend/tests/test_all.py::test_9_recommendation_generation PASSED       [ 78%]
-backend/tests/test_all.py::test_10_missing_evidence_handling PASSED      [ 82%]
-backend/tests/test_all.py::test_11_conflicting_evidence_handling PASSED  [ 86%]
-backend/tests/test_all.py::test_12_second_account_isolation PASSED       [ 91%]
-backend/tests/test_all.py::test_13_data_deletion_privacy PASSED          [ 95%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_us_public PASSED [  3%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_parent_subsidiary PASSED [  7%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_global_enterprises PASSED [ 11%]
+backend/tests/test_dynamic_generalization.py::test_entity_resolution_fictional_unknown PASSED [ 14%]
+backend/tests/test_dynamic_generalization.py::test_fact_extraction_no_siemens_leakage PASSED [ 18%]
+backend/tests/test_dynamic_generalization.py::test_recommendation_account_agnostic PASSED [ 22%]
+backend/tests/test_dynamic_generalization.py::test_recommendation_empty_contacts_honest_message PASSED [ 25%]
+backend/tests/test_dynamic_generalization.py::test_scoring_account_agnostic_timing PASSED [ 29%]
+backend/tests/test_dynamic_generalization.py::test_siemens_flagship_remains_intact PASSED [ 33%]
+backend/tests/test_dynamic_generalization.py::test_financial_normalizer_multi_currency PASSED [ 37%]
+backend/tests/test_dynamic_generalization.py::test_workforce_normalizer_ranges PASSED [ 40%]
+backend/tests/test_dynamic_generalization.py::test_data_quality_gate_completed_and_partially_completed PASSED [ 44%]
+backend/tests/test_dynamic_generalization.py::test_capgemini_it_services_no_industrial_leakage PASSED [ 48%]
+backend/tests/test_all.py::test_1_account_creation PASSED                [ 51%]
+backend/tests/test_all.py::test_2_source_ingestion PASSED                [ 55%]
+backend/tests/test_all.py::test_3_evidence_extraction PASSED             [ 59%]
+backend/tests/test_all.py::test_4_evidence_to_claim_linking PASSED       [ 62%]
+backend/tests/test_all.py::test_5_contact_validation PASSED              [ 66%]
+backend/tests/test_all.py::test_6_confidence_classification PASSED       [ 70%]
+backend/tests/test_all.py::test_7_account_scoring PASSED                 [ 74%]
+backend/tests/test_all.py::test_8_buying_committee_graph_api PASSED      [ 77%]
+backend/tests/test_all.py::test_9_recommendation_generation PASSED       [ 81%]
+backend/tests/test_all.py::test_10_missing_evidence_handling PASSED      [ 85%]
+backend/tests/test_all.py::test_11_conflicting_evidence_handling PASSED  [ 88%]
+backend/tests/test_all.py::test_12_second_account_isolation PASSED       [ 92%]
+backend/tests/test_all.py::test_13_data_deletion_privacy PASSED          [ 96%]
 backend/tests/test_all.py::test_14_api_error_handling PASSED             [100%]
 
-======================= 23 passed in 23.56s =======================
+======================= 27 passed in 17.59s =======================
 ```
 
 ### 14.3 Detailed Test Descriptions
@@ -1043,15 +1079,26 @@ backend/tests/test_all.py::test_14_api_error_handling PASSED             [100%]
 7. `test_recommendation_empty_contacts_honest_message`: Validates that when an account has zero discovered contacts, the engine outputs an honest explanatory message rather than inventing fake contacts.
 8. `test_scoring_account_agnostic_timing`: Verifies that timing score evaluates actual account triggers rather than assuming Altair or Siemens Industrial Copilot.
 9. `test_siemens_flagship_remains_intact`: Regression assertion confirming that the Siemens AG flagship dossier (13 contacts, Frederik Janssen, 4 expansion modules, €75.9B revenue) remains 100% intact.
+10. `test_financial_normalizer_multi_currency`: Tests universal multi-currency normalization ($ USD, € EUR, ₹ INR, £ GBP, CHF), handling millions, billions, trillions, lakh crores, European comma-decimal notations, and explicit `UNKNOWN` handling.
+11. `test_workforce_normalizer_ranges`: Validates headcount normalization across exact numbers and ranges (`10,000–25,000`), parenthetical date extraction, and citation stripping.
+12. `test_data_quality_gate_completed_and_partially_completed`: Validates pre-commit evaluation, enforcing schema validation, positive non-zero financial figures, non-empty excerpts, cross-tenant account isolation, and three-tier quality tagging (`COMPLETED`, `PARTIALLY_COMPLETED`, `FAILED`).
+13. `test_capgemini_it_services_no_industrial_leakage`: Tests live pipeline execution for an IT services firm (`Capgemini`), validating Paris headquarters, Euronext Paris ticker, IT Consulting industry, and zero industrial/manufacturing contamination.
 
 #### Core Platform, Integration & Regression Tests (`test_all.py`)
-10. `test_1_account_creation`: Verifies that account creation initializes isolated records with valid UUIDs.
-11. `test_2_source_ingestion`: Validates multi-source ingestion tagging with official provenance and reliability weights.
-12. `test_3_evidence_extraction`: Validates extraction of structured claims from raw source text.
-13. `test_4_evidence_to_claim_linking`: Asserts that 100% of claims link to primary source IDs with verbatim excerpts.
-14. `test_5_contact_validation`: Validates contact role assignment, department mapping, and reachability.
-15. `test_6_confidence_classification`: Tests confidence classification scoring based on corroboration thresholds.
-16. `test_7_account_scoring`: Verifies mathematical scoring formulas for Attractiveness, Timing, and Coverage.
+14. `test_1_account_creation`: Verifies that account creation initializes isolated records with valid UUIDs.
+15. `test_2_source_ingestion`: Validates multi-source ingestion tagging with official provenance and reliability weights.
+16. `test_3_evidence_extraction`: Validates extraction of structured claims from raw source text.
+17. `test_4_evidence_to_claim_linking`: Asserts that 100% of claims link to primary source IDs with verbatim excerpts.
+18. `test_5_contact_validation`: Validates contact role assignment, department mapping, and reachability.
+19. `test_6_confidence_classification`: Tests confidence classification scoring based on corroboration thresholds.
+20. `test_7_account_scoring`: Verifies mathematical scoring formulas for Attractiveness, Timing, and Coverage.
+21. `test_8_buying_committee_graph_api`: Confirms React Flow node and edge generation for organizational visualization.
+22. `test_9_recommendation_generation`: Confirms primary champion selection and multi-touch sales copy synthesis.
+23. `test_10_missing_evidence_handling`: Tests graceful handling of sparse or missing evidence without crashes.
+24. `test_11_conflicting_evidence_handling`: Tests dual reporting handling (e.g. continuing vs. discontinued headcount).
+25. `test_12_second_account_isolation`: Tests ingestion of an expansion account (`ABB Ltd`), verifying zero cross-tenant data leakage.
+26. `test_13_data_deletion_privacy`: Inserts a test contact, executes GDPR `DELETE /api/contacts/{id}`, and confirms permanent purge from SQLite.
+27. `test_14_api_error_handling`: Validates proper HTTP 404/422 status codes and error payloads.
 17. `test_8_buying_committee_graph_api`: Confirms React Flow node and edge generation for organizational visualization.
 18. `test_9_recommendation_generation`: Confirms primary champion selection and multi-touch sales copy synthesis.
 19. `test_10_missing_evidence_handling`: Tests graceful handling of sparse or missing evidence without crashes.
